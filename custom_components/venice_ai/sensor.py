@@ -107,7 +107,7 @@ class VeniceAIUsageSensor(SensorEntity):
     """A diagnostic sensor reporting a single Venice AI usage metric."""
 
     _attr_has_entity_name = True
-    _attr_should_poll = True
+    _attr_should_poll = False
     entity_description: VeniceAISensorDescription
 
     def __init__(
@@ -125,6 +125,11 @@ class VeniceAIUsageSensor(SensorEntity):
             name=entry.title,
             manufacturer="Venice AI",
         )
+
+    async def async_added_to_hass(self) -> None:
+        """Push state updates whenever the metrics change."""
+        await super().async_added_to_hass()
+        self.async_on_remove(self._metrics.add_listener(self.async_write_ha_state))
 
     @property
     def native_value(self) -> int | str | None:

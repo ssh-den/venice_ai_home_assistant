@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import logging
 import time
@@ -95,15 +95,34 @@ class VeniceAIMetrics:
     completion_tokens: int = 0
     total_tokens: int = 0
     last_error: str | None = None
+    _listeners: list[Callable[[], None]] = field(
+        default_factory=list, repr=False, compare=False
+    )
+
+    def add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call ``listener`` after every change; return a function to remove it."""
+        self._listeners.append(listener)
+
+        def _remove() -> None:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
+        return _remove
+
+    def _notify(self) -> None:
+        for listener in list(self._listeners):
+            listener()
 
     def record_request(self) -> None:
         """Increment the total request counter."""
         self.request_count += 1
+        self._notify()
 
     def record_error(self, error: BaseException) -> None:
         """Increment the error counter and remember the last error message."""
         self.error_count += 1
         self.last_error = f"{type(error).__name__}: {error}"
+        self._notify()
 
     def record_usage(self, usage: dict[str, Any] | None) -> None:
         """Accumulate token usage from an API ``usage`` block, if present."""
@@ -112,6 +131,7 @@ class VeniceAIMetrics:
         self.prompt_tokens += int(usage.get("prompt_tokens", 0) or 0)
         self.completion_tokens += int(usage.get("completion_tokens", 0) or 0)
         self.total_tokens += int(usage.get("total_tokens", 0) or 0)
+        self._notify()
 
 
 class VeniceAIError(Exception):
@@ -219,6 +239,8 @@ class ChatCompletions:
         _LOGGER.debug(
             "[PERF-HTTP] POST /chat/completions (stream) — opening connection"
         )
+        metrics = self.client.metrics
+        metrics.record_request()
         try:
             request = self.client._http_client.build_request(
                 "POST",
@@ -244,14 +266,18 @@ class ChatCompletions:
             _LOGGER.error(
                 "Venice AI HTTP error %s: %s", err.response.status_code, error_detail
             )
-            raise _categorize_http_error(
+            categorized = _categorize_http_error(
                 err.response.status_code, error_detail, "streaming chat"
-            ) from err
+            )
+            metrics.record_error(categorized)
+            raise categorized from err
         except httpx.RequestError as err:
             if response is not None:
                 await response.aclose()
             _LOGGER.error("Venice AI request error: %s", err)
-            raise NetworkError(f"Request error (streaming chat): {err}") from err
+            network_err = NetworkError(f"Request error (streaming chat): {err}")
+            metrics.record_error(network_err)
+            raise network_err from err
 
         async def _stream() -> AsyncGenerator[ChatCompletionChunk]:
             _chunk_count = 0
@@ -264,7 +290,10 @@ class ChatCompletions:
                         try:
                             chunk_data = json.loads(line[6:])
                             _chunk_count += 1
-                            yield ChatCompletionChunk(chunk_data)
+                            chunk = ChatCompletionChunk(chunk_data)
+                            if chunk.usage:
+                                metrics.record_usage(chunk.usage)
+                            yield chunk
                         except json.JSONDecodeError:
                             _LOGGER.warning("Failed to decode stream chunk: %s", line)
                     else:
@@ -278,7 +307,9 @@ class ChatCompletions:
                 # Convert mid-stream transport failures (connection reset, server close,
                 # timeout) to a typed NetworkError so callers get consistent exceptions.
                 _LOGGER.error("Stream interrupted by transport error: %s", err)
-                raise NetworkError(f"Stream interrupted: {err}") from err
+                network_err = NetworkError(f"Stream interrupted: {err}")
+                metrics.record_error(network_err)
+                raise network_err from err
             finally:
                 if response is not None:
                     await response.aclose()
@@ -314,7 +345,6 @@ class ChatCompletions:
             payload = {**payload, **kwargs}
         payload = {**payload, "stream": False}
 
-        self.client.metrics.record_request()
         try:
             response = await self.client._async_request_with_retry(
                 "POST",
@@ -346,17 +376,13 @@ class ChatCompletions:
                         error_message = error_json["error"]
                 except json.JSONDecodeError:
                     pass
-            categorized = _categorize_http_error(
+            raise _categorize_http_error(
                 err.response.status_code, error_message, "chat completion"
-            )
-            self.client.metrics.record_error(categorized)
-            raise categorized from err
+            ) from err
 
         except httpx.RequestError as err:
             _LOGGER.error("Venice AI request error: %s", err)
-            network_err = NetworkError(f"Request error (chat completion): {err}")
-            self.client.metrics.record_error(network_err)
-            raise network_err from err
+            raise NetworkError(f"Request error (chat completion): {err}") from err
 
         except json.JSONDecodeError as err:
             _LOGGER.error("Failed to decode non-streaming JSON response: %s", err.doc)
@@ -806,6 +832,7 @@ class AsyncVeniceAIClient:
         retryable_statuses = {429, 500, 502, 503}
         url = f"{self._base_url}{endpoint}"
         _req_start = time.monotonic()
+        self.metrics.record_request()
 
         for attempt in range(MAX_RETRIES + 1):
             _attempt_start = time.monotonic()
@@ -853,6 +880,12 @@ class AsyncVeniceAIClient:
                         else ""
                     ),
                 )
+                if response.is_error:
+                    self.metrics.record_error(
+                        _categorize_http_error(
+                            response.status_code, response.reason_phrase, endpoint
+                        )
+                    )
                 return response
 
             except (
@@ -883,7 +916,9 @@ class AsyncVeniceAIClient:
                         _attempt_elapsed,
                         time.monotonic() - _req_start,
                     )
-                    raise NetworkError(f"Max retries exceeded: {err}") from err
+                    network_err = NetworkError(f"Max retries exceeded: {err}")
+                    self.metrics.record_error(network_err)
+                    raise network_err from err
 
         # Should never reach here; all retry attempts exhausted
         raise NetworkError("Max retries exceeded")
