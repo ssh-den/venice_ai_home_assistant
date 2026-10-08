@@ -81,7 +81,14 @@ def mock_client() -> Generator[MagicMock]:
     client.images.generate = AsyncMock(
         return_value={"data": [{"url": "https://example.com/a.png", "b64_json": "x"}]}
     )
-    with patch("custom_components.venice_ai.AsyncVeniceAIClient", return_value=client):
+    client.__aenter__.return_value = client
+    with (
+        patch("custom_components.venice_ai.AsyncVeniceAIClient", return_value=client),
+        patch(
+            "custom_components.venice_ai.config_flow.AsyncVeniceAIClient",
+            return_value=client,
+        ),
+    ):
         yield client
 
 
