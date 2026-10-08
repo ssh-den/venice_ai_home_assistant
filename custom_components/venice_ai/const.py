@@ -12,9 +12,9 @@ DEFAULT_SYSTEM_PROMPT = (
     "You are a helpful smart home assistant. Be concise and friendly."
 )
 CONF_CHAT_MODEL = "chat_model"
-RECOMMENDED_CHAT_MODEL = (
-    "e2ee-gemma-4-31b"  # Venice AI default model with function calling support
-)
+# Cheapest TEE-backed model with function calling; without E2EE headers the
+# request still runs inside the attested enclave.
+RECOMMENDED_CHAT_MODEL = "e2ee-deepseek-v4-flash"
 CONF_MAX_TOKENS = "max_tokens"
 RECOMMENDED_MAX_TOKENS = 512
 CONF_TOP_P = "top_p"
