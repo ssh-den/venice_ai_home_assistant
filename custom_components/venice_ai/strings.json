@@ -77,6 +77,28 @@
         "description": "The Venice AI API rate limit has been exceeded for {entry_title}. The integration will retry automatically."
       }
     },
+    "entity": {
+      "sensor": {
+        "request_count": {
+          "name": "API requests"
+        },
+        "error_count": {
+          "name": "API errors"
+        },
+        "total_tokens": {
+          "name": "Total tokens"
+        },
+        "prompt_tokens": {
+          "name": "Prompt tokens"
+        },
+        "completion_tokens": {
+          "name": "Completion tokens"
+        },
+        "last_error": {
+          "name": "Last error"
+        }
+      }
+    },
     "exceptions": {
       "invalid_config_entry": {
         "message": "Config entry {config_entry} is not a Venice AI entry."
