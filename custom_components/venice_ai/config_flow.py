@@ -69,6 +69,7 @@ from .const import (
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
 )
+from .models import parse_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -397,11 +398,8 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
                 text_resp = await client.models.list(model_type="text")
                 if isinstance(text_resp, list):
                     chat_options = [
-                        SelectOptionDict(
-                            label=m.get("id", "Unknown"), value=m.get("id", "")
-                        )
-                        for m in text_resp
-                        if isinstance(m, dict) and m.get("id")
+                        SelectOptionDict(label=info.label, value=info.id)
+                        for info in parse_models(text_resp).values()
                     ]
                     _LOGGER.debug("Found %d text models", len(chat_options))
             except AuthenticationError:

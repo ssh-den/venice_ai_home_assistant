@@ -39,6 +39,7 @@ from .const import (
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
+from .models import get_chat_model_info
 from .venice_api import ChatParameters, VeniceConversationService, strip_thinking
 
 _LOGGER = logging.getLogger(__name__)
@@ -273,15 +274,19 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
             options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
         )
 
+        model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        info = get_chat_model_info(self.entry, model)
         tools: list[dict[str, Any]] | None = None
-        if chat_log.llm_api:
+        if chat_log.llm_api and info is not None and not info.supports_function_calling:
+            _LOGGER.debug("Model %s does not support tools, not sending them", model)
+        elif chat_log.llm_api:
             tools = [
                 _format_tool(tool, chat_log.llm_api.custom_serializer)
                 for tool in chat_log.llm_api.tools
             ] or None
 
         params = ChatParameters(
-            model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            model=model,
             max_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
             temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
             top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),

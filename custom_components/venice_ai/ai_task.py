@@ -26,6 +26,7 @@ from .const import (
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
 )
+from .models import get_chat_model_info
 from .venice_api import (
     ChatParameters,
     VeniceConversationService,
@@ -88,7 +89,19 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         if not messages or messages[-1]["role"] != "user":
             raise HomeAssistantError("No user message found in chat log")
 
-        if task.structure:
+        options = self.entry.options
+        model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        info = get_chat_model_info(self.entry, model)
+        response_format: dict[str, Any] | None = None
+        if task.structure and info is not None and info.supports_response_schema:
+            response_format = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "result",
+                    "schema": convert(task.structure),
+                },
+            }
+        elif task.structure:
             schema = convert(task.structure)
             messages.insert(
                 len(messages) - 1,
@@ -102,17 +115,17 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
                 },
             )
 
-        options = self.entry.options
         venice_params = (
             {"disable_thinking": True}
             if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
             else None
         )
         params = ChatParameters(
-            model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            model=model,
             max_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
             temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
             venice_parameters=venice_params,
+            response_format=response_format,
         )
 
         try:

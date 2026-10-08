@@ -23,8 +23,33 @@ from custom_components.venice_ai.const import (
     RECOMMENDED_TTS_MODEL,
 )
 
+# Text model with structured output but without function calling
+SCHEMA_MODEL = "schema-model"
+
 MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
-    "text": [{"id": RECOMMENDED_CHAT_MODEL, "type": "text"}],
+    "text": [
+        {
+            "id": RECOMMENDED_CHAT_MODEL,
+            "type": "text",
+            "model_spec": {
+                "privacy": "private",
+                "capabilities": {
+                    "supportsFunctionCalling": True,
+                    "supportsTeeAttestation": True,
+                    "supportsE2EE": True,
+                },
+                "pricing": {"input": {"usd": 0.18}, "output": {"usd": 0.37}},
+            },
+        },
+        {
+            "id": SCHEMA_MODEL,
+            "type": "text",
+            "model_spec": {
+                "privacy": "anonymized",
+                "capabilities": {"supportsResponseSchema": True},
+            },
+        },
+    ],
     "tts": [
         {
             "id": RECOMMENDED_TTS_MODEL,

@@ -19,13 +19,14 @@ import voluptuous as vol
 
 from custom_components.venice_ai.client import RateLimitError
 from custom_components.venice_ai.const import (
+    CONF_CHAT_MODEL,
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
     MAX_API_MESSAGES,
 )
 from custom_components.venice_ai.conversation import _final_text, _trim_api_messages
 
-from .conftest import FakeChunk, FakeStream
+from .conftest import SCHEMA_MODEL, FakeChunk, FakeStream
 
 TEST_API_ID = "venice_test_api"
 
@@ -267,3 +268,49 @@ def test_trim_noop_for_short_conversations() -> None:
 )
 def test_final_text(raw: str, finish_reason: str, strip: bool, expected: str) -> None:
     assert expected in _final_text(raw, finish_reason, strip)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {
+            CONF_STREAM_RESPONSE: False,
+            CONF_LLM_HASS_API: [TEST_API_ID],
+            CONF_CHAT_MODEL: SCHEMA_MODEL,
+        }
+    ],
+)
+async def test_tools_not_sent_to_model_without_function_calling(
+    hass: HomeAssistant,
+    echo_tool: _EchoTool,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+) -> None:
+    mock_client.chat.create_non_streaming.return_value = _reply("No tools")
+    result = await _converse(hass, "Echo ping")
+
+    assert result.response.speech["plain"]["speech"] == "No tools"
+    assert mock_client.chat.create_non_streaming.call_args.kwargs["tools"] is None
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {
+            CONF_STREAM_RESPONSE: False,
+            CONF_LLM_HASS_API: [TEST_API_ID],
+            CONF_CHAT_MODEL: "unlisted-model",
+        }
+    ],
+)
+async def test_tools_sent_to_unknown_model(
+    hass: HomeAssistant,
+    echo_tool: _EchoTool,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+) -> None:
+    mock_client.chat.create_non_streaming.return_value = _reply("Hi")
+    await _converse(hass, "Hi")
+
+    tools = mock_client.chat.create_non_streaming.call_args.kwargs["tools"]
+    assert tools[0]["function"]["name"] == "echo"

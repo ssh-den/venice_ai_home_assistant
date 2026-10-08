@@ -44,6 +44,7 @@ class ChatParameters:
     top_p: float | None = None
     tools: list[dict[str, Any]] | None = None
     venice_parameters: dict[str, Any] | None = None
+    response_format: dict[str, Any] | None = None
 
 
 @dataclass
@@ -187,6 +188,7 @@ class VeniceConversationService:
             top_p=params.top_p,
             tools=params.tools or None,
             venice_parameters=params.venice_parameters,
+            response_format=params.response_format,
             stream=False,
         )
 
@@ -236,6 +238,7 @@ class VeniceConversationService:
             top_p=params.top_p,
             tools=params.tools or None,
             venice_parameters=params.venice_parameters,
+            response_format=params.response_format,
             stream_options={"include_usage": True},
         ) as stream:
             async for chunk in stream:

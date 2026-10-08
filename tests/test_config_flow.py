@@ -92,6 +92,22 @@ async def test_options_flow(
     assert setup_integration.options[CONF_TTS_VOICE] == "af_heart"
 
 
+async def test_options_chat_model_labels(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    schema = result["data_schema"]
+    assert schema is not None
+    selector = next(
+        value for key, value in schema.schema.items() if str(key) == CONF_CHAT_MODEL
+    )
+    labels = {o["value"]: o["label"] for o in selector.config["options"]}
+    assert labels[RECOMMENDED_CHAT_MODEL] == (
+        f"{RECOMMENDED_CHAT_MODEL} (E2EE, tools, $0.18/$0.37 per 1M)"
+    )
+    assert labels["schema-model"] == "schema-model (Anonymized)"
+
+
 def test_options_range_validation() -> None:
     errors = VeniceAIOptionsFlow()._validate_numeric_options({CONF_MAX_TOKENS: 0})
     assert errors == {CONF_MAX_TOKENS: "max_tokens_out_of_range"}
