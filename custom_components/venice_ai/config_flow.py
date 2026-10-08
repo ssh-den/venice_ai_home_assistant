@@ -33,6 +33,7 @@ from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_DISABLE_THINKING,
+    CONF_IMAGE_MODEL,
     CONF_MAX_TOKENS,
     CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
@@ -52,6 +53,7 @@ from .const import (
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_DISABLE_THINKING,
+    RECOMMENDED_IMAGE_MODEL,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_REQUEST_TIMEOUT,
@@ -516,12 +518,23 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
             errors[CONF_PROMPT] = "prompt_must_be_string"
         return errors
 
+    def _image_model_options(self) -> list[SelectOptionDict]:
+        """Return image models known to the loaded entry's coordinator."""
+        runtime_data = getattr(self.config_entry, "runtime_data", None)
+        data = runtime_data.coordinator.data if runtime_data else None
+        return [
+            SelectOptionDict(label=model_id, value=model_id)
+            for model in (data or {}).get("image_models", [])
+            if (model_id := model.get("id"))
+        ]
+
     def _build_options_schema(
         self,
         chat_options: list[SelectOptionDict],
         combined_tts_options: list[SelectOptionDict],
         stt_options: list[SelectOptionDict],
         llm_api_options: list[SelectOptionDict] | None = None,
+        image_options: list[SelectOptionDict] | None = None,
     ) -> vol.Schema:
         """Build the full options schema.
 
@@ -622,6 +635,18 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
                     )
                 ),
                 vol.Optional(CONF_STT_TIMESTAMPS): BooleanSelector(),
+                vol.Optional(CONF_IMAGE_MODEL): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[
+                            SelectOptionDict(
+                                label="Venice default", value=RECOMMENDED_IMAGE_MODEL
+                            ),
+                            *(image_options or []),
+                        ],
+                        mode=SelectSelectorMode.DROPDOWN,
+                        custom_value=True,
+                    )
+                ),
                 vol.Optional(CONF_REQUEST_TIMEOUT): NumberSelector(
                     NumberSelectorConfig(
                         min=10.0, max=300.0, step=5.0, mode=NumberSelectorMode.SLIDER
@@ -718,6 +743,7 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
             combined_tts_options,
             stt_options,
             llm_api_options,
+            self._image_model_options(),
         )
 
         # Layer: defaults → saved options → current submission.
@@ -740,6 +766,7 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
             CONF_STT_RESPONSE_FORMAT: RECOMMENDED_STT_RESPONSE_FORMAT,
             CONF_STT_TIMESTAMPS: RECOMMENDED_STT_TIMESTAMPS,
             CONF_REQUEST_TIMEOUT: RECOMMENDED_REQUEST_TIMEOUT,
+            CONF_IMAGE_MODEL: RECOMMENDED_IMAGE_MODEL,
         }
         # Saved options may contain CONF_TTS_MODEL / CONF_TTS_VOICE separately —
         # those keys are not in the schema and are harmlessly ignored by

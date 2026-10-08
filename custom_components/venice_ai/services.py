@@ -22,7 +22,7 @@ from homeassistant.helpers import (
 import voluptuous as vol
 
 from .client import VeniceAIError
-from .const import DOMAIN
+from .const import CONF_IMAGE_MODEL, DOMAIN, RECOMMENDED_IMAGE_MODEL
 from .venice_api import extract_json
 
 if TYPE_CHECKING:
@@ -35,14 +35,25 @@ ATTR_CONFIG_ENTRY = "config_entry"
 
 _CONFIG_ENTRY_SELECTOR = selector.ConfigEntrySelector({"integration": DOMAIN})
 
+IMAGE_SIZES = (
+    "auto",
+    "256x256",
+    "512x512",
+    "1024x1024",
+    "1536x1024",
+    "1024x1536",
+    "1792x1024",
+    "1024x1792",
+)
+IMAGE_QUALITIES = ("auto", "low", "medium", "high", "standard", "hd")
+
 GENERATE_IMAGE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_CONFIG_ENTRY): _CONFIG_ENTRY_SELECTOR,
         vol.Required("prompt"): cv.string,
-        vol.Optional("size", default="1024x1024"): vol.In(
-            ("1024x1024", "1024x1792", "1792x1024")
-        ),
-        vol.Optional("quality", default="standard"): vol.In(("standard", "hd")),
+        vol.Optional("model"): cv.string,
+        vol.Optional("size", default="1024x1024"): vol.In(IMAGE_SIZES),
+        vol.Optional("quality", default="standard"): vol.In(IMAGE_QUALITIES),
         vol.Optional("style", default="vivid"): vol.In(("vivid", "natural")),
     }
 )
@@ -78,10 +89,26 @@ async def _async_generate_image(call: ServiceCall) -> ServiceResponse:
     """Generate an image with Venice AI."""
     entry = _async_get_loaded_entry(call.hass, call.data[ATTR_CONFIG_ENTRY])
     client = entry.runtime_data.client
+    model: str = call.data.get("model") or entry.options.get(
+        CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL
+    )
+    available = {
+        m.get("id")
+        for m in (entry.runtime_data.coordinator.data or {}).get("image_models", [])
+    }
+    if model != RECOMMENDED_IMAGE_MODEL and available and model not in available:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="invalid_image_model",
+            translation_placeholders={
+                "model": model,
+                "models": ", ".join(sorted(m for m in available if m)),
+            },
+        )
 
     try:
         response = await client.images.generate(
-            model="default",
+            model=model,
             prompt=call.data["prompt"],
             size=call.data["size"],
             quality=call.data["quality"],

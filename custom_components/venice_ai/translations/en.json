@@ -48,7 +48,8 @@
           "stt_response_format": "STT Response Format",
           "stt_timestamps": "STT Include Timestamps",
           "stream_response": "Stream responses",
-          "request_timeout": "Request timeout (seconds)"
+          "request_timeout": "Request timeout (seconds)",
+          "image_model": "Image model"
         },
         "data_description": {
           "chat_model": "Venice AI text model used for conversations and AI tasks.",
@@ -67,7 +68,8 @@
           "stt_model": "Speech-to-text model used to transcribe voice commands.",
           "stt_response_format": "Format of the transcription returned by Venice AI.",
           "stt_timestamps": "Request word timestamps in the transcription.",
-          "request_timeout": "How long to wait for a Venice AI response before giving up."
+          "request_timeout": "How long to wait for a Venice AI response before giving up.",
+          "image_model": "Model used by the generate_image action when no model is given."
         }
       }
     },
@@ -139,6 +141,9 @@
     },
     "config_entry_not_loaded": {
       "message": "The Venice AI config entry {config_entry} is not loaded."
+    },
+    "invalid_image_model": {
+      "message": "Image model {model} is not available. Available models: {models}."
     }
   },
   "services": {
@@ -153,6 +158,10 @@
         "prompt": {
           "name": "Prompt",
           "description": "Image description"
+        },
+        "model": {
+          "name": "Model",
+          "description": "Venice AI image model. Defaults to the model set in the integration options."
         },
         "size": {
           "name": "Size",

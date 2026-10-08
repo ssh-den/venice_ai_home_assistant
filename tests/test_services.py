@@ -12,7 +12,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.venice_ai.client import VeniceAIError
-from custom_components.venice_ai.const import DOMAIN
+from custom_components.venice_ai.const import CONF_IMAGE_MODEL, DOMAIN
 
 
 async def test_services_registered_without_loaded_entry(
@@ -151,3 +151,55 @@ async def test_ai_task_invalid_json(
             blocking=True,
             return_response=True,
         )
+
+
+async def test_generate_image_uses_requested_model(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    await hass.services.async_call(
+        DOMAIN,
+        "generate_image",
+        {
+            "config_entry": setup_integration.entry_id,
+            "prompt": "a cat",
+            "model": "hidream",
+        },
+        blocking=True,
+        return_response=True,
+    )
+    assert mock_client.images.generate.call_args.kwargs["model"] == "hidream"
+
+
+async def test_generate_image_defaults_to_option(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    hass.config_entries.async_update_entry(
+        setup_integration, options={CONF_IMAGE_MODEL: "venice-sd35"}
+    )
+    await hass.async_block_till_done()
+    await hass.services.async_call(
+        DOMAIN,
+        "generate_image",
+        {"config_entry": setup_integration.entry_id, "prompt": "a cat"},
+        blocking=True,
+        return_response=True,
+    )
+    assert mock_client.images.generate.call_args.kwargs["model"] == "venice-sd35"
+
+
+async def test_generate_image_unknown_model(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    with pytest.raises(ServiceValidationError) as exc:
+        await hass.services.async_call(
+            DOMAIN,
+            "generate_image",
+            {
+                "config_entry": setup_integration.entry_id,
+                "prompt": "a cat",
+                "model": "nope",
+            },
+            blocking=True,
+            return_response=True,
+        )
+    assert exc.value.translation_key == "invalid_image_model"

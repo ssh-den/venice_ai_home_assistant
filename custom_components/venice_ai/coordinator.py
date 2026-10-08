@@ -26,6 +26,7 @@ class VeniceAICoordinatorData(TypedDict):
 
     text_models: list[dict[str, Any]]
     audio_models: list[dict[str, Any]]
+    image_models: list[dict[str, Any]]
     voices: list[str]
 
 
@@ -55,6 +56,7 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         data: VeniceAICoordinatorData = {
             "text_models": [],
             "audio_models": [],
+            "image_models": [],
             "voices": [],
         }
 
@@ -153,6 +155,13 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             _LOGGER.warning("Venice AI error fetching ASR models: %s", err)
         except Exception:
             _LOGGER.exception("Unexpected error fetching ASR models")
+
+        try:
+            data["image_models"] = await self.client.models.list(model_type="image")
+        except AuthenticationError as err:
+            raise UpdateFailed(f"Authentication failed: {err}") from err
+        except VeniceAIError as err:
+            _LOGGER.warning("Venice AI error fetching image models: %s", err)
 
         # MED-1: If every fetch failed and we have no data at all, surface the
         # failure to the coordinator so HA can apply back-off, show the entity

@@ -46,6 +46,10 @@ RECOMMENDED_TTS_RESPONSE_FORMAT = "mp3"
 CONF_TTS_SPEED = "tts_speed"
 RECOMMENDED_TTS_SPEED = 1.0
 
+# Venice AI image options; "default" lets Venice pick its default model
+CONF_IMAGE_MODEL = "image_model"
+RECOMMENDED_IMAGE_MODEL = "default"
+
 # Venice AI STT options
 CONF_STT_MODEL = "stt_model"
 RECOMMENDED_STT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
