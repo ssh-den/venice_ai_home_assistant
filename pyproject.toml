@@ -7,6 +7,14 @@ requires-python = ">=3.13"
 dev = [
     "pytest-homeassistant-custom-component",
     "voluptuous-openapi>=0.0.4",
+    # Requirements of the Home Assistant components this integration loads
+    "ha-ffmpeg",
+    "hassil",
+    "home-assistant-intents",
+    "mutagen",
+    "pymicro-vad",
+    "pyspeex-noise",
+    "PyTurboJPEG",
     "black",
     "mypy",
     "pylint",

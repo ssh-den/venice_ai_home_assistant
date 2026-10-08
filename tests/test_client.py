@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from .conftest import load_component_module
-
-client = load_component_module("client")
+from custom_components.venice_ai import client
 
 
 class TestVeniceAIMetrics:

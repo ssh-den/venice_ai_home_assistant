@@ -9,13 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from .conftest import load_component_module
-
-venice_api = load_component_module("venice_api")
-
-ChatParameters = venice_api.ChatParameters
-StreamingChatResult = venice_api.StreamingChatResult
-VeniceConversationService = venice_api.VeniceConversationService
+from custom_components.venice_ai import venice_api
+from custom_components.venice_ai.venice_api import (
+    ChatParameters,
+    StreamingChatResult,
+    VeniceConversationService,
+)
 
 
 class TestStreamingChatResult:

@@ -1,89 +1,13 @@
-"""Schema conversion tests (TEST-3).
-
-These tests exercise the schema-conversion helpers in ``conversation.py``:
-
-* ``_format_venice_schema`` — produces Venice-compatible OpenAPI schemas.
-* ``_convert_schema_to_hashable`` — converts voluptuous schemas into a
-  hashable representation suitable for ``voluptuous_openapi.convert``.
-
-Rather than importing ``conversation.py`` directly (which transitively
-imports Home Assistant and is not available in a plain unit-test
-environment), the helpers are extracted from the source file via AST and
-executed in a clean namespace. This keeps the tests faithful to the actual
-implementation while still running under the lightweight pytest harness
-that ``tests/conftest.py`` sets up.
-"""
+"""Tests for the tool schema conversion helpers in ``conversation.py``."""
 
 from __future__ import annotations
 
-import ast
-from collections.abc import Callable
-import logging
-from pathlib import Path
-from typing import Any, cast
-
+from homeassistant.helpers import selector
 import pytest
 
-_COMPONENT_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "venice_ai"
-
-
-class _StubSelector:
-    """Placeholder for ``homeassistant.helpers.selector.Selector`` subclasses."""
-
-    SelectSelector = type("SelectSelector", (), {})
-
-
-class _StubSelectorModule:
-    """Drop-in module stand-in for ``homeassistant.helpers.selector``."""
-
-    Selector = _StubSelector
-    SelectSelector = _StubSelector.SelectSelector
-    BooleanSelector = type("BooleanSelector", (), {})
-    NumberSelector = type("NumberSelector", (), {})
-    TemplateSelector = type("TemplateSelector", (), {})
-
-
-def _extract_helpers() -> dict[str, object]:
-    """AST-extract the schema helpers from ``conversation.py`` for isolated testing.
-
-    Only module-level function definitions whose name is one of the helpers
-    we want to test are loaded. The body of each function is exec'd in a
-    fresh namespace that does not have access to ``homeassistant`` or any
-    other HA imports, which is fine because these helpers are pure
-    transformations that don't touch HA state. Names that the helpers
-    reference at module level (``Any``, ``selector``, ``_LOGGER``) are
-    injected into the namespace so the bodies can run unchanged.
-    """
-    target_names = {"_format_venice_schema", "_convert_schema_to_hashable"}
-    source = (_COMPONENT_DIR / "conversation.py").read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    selected: list[ast.FunctionDef] = [
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in target_names
-    ]
-    if {fn.name for fn in selected} != target_names:
-        missing = target_names - {fn.name for fn in selected}
-        raise AssertionError(f"Could not find helpers in conversation.py: {missing}")
-
-    namespace: dict[str, object] = {
-        "__builtins__": __builtins__,
-        # Names referenced inside the helper bodies (from module-level imports).
-        "Any": Any,
-        "selector": _StubSelectorModule,
-        "_LOGGER": logging.getLogger("venice_ai.test_schema"),
-    }
-    for fn in selected:
-        snippet = ast.Module(body=[fn], type_ignores=[])
-        code = compile(snippet, filename=f"conversation.py:{fn.name}", mode="exec")
-        exec(code, namespace)
-    return namespace
-
-
-HELPERS: dict[str, object] = _extract_helpers()
-_format_venice_schema = cast(Callable[[Any], Any], HELPERS["_format_venice_schema"])
-_convert_schema_to_hashable = cast(
-    Callable[[Any], Any], HELPERS["_convert_schema_to_hashable"]
+from custom_components.venice_ai.conversation import (
+    _convert_schema_to_hashable,
+    _format_venice_schema,
 )
 
 
@@ -141,7 +65,7 @@ class TestConvertSchemaToHashable:
         assert _convert_schema_to_hashable({}) == {}
 
     def test_selector_value_becomes_str(self) -> None:
-        sel = _StubSelector()
+        sel = selector.TextSelector()
         assert _convert_schema_to_hashable({"a": sel}) == {"a": str}
 
 
