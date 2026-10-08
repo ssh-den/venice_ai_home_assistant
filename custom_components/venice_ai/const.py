@@ -67,10 +67,10 @@ MAX_API_MESSAGES = 50
 # are rejected early with an ERROR result rather than causing an OOM spike.
 MAX_STT_BUFFER_SIZE = 10 * 1024 * 1024
 
-# Request timeout configuration (HIGH-4)
-# Users with slow connections or large payloads can raise this via options.
+# Timeout in seconds for every Venice AI request; for streamed responses it
+# bounds the wait between chunks.
 CONF_REQUEST_TIMEOUT = "request_timeout"
-RECOMMENDED_REQUEST_TIMEOUT = 60.0
+RECOMMENDED_REQUEST_TIMEOUT = 120.0
 
 # Retry configuration constants (MED-4).
 # Extracted from client.py so they can be tuned without touching client logic.
@@ -88,13 +88,6 @@ FEATURE_MIN_VERSIONS: dict[str, str] = {
     "sensor_total_increasing": "2021.12.0",
 }
 
-# QUAL-2 / PERF-4: httpx connection-pool and per-request timeout defaults.
-# Centralised here so users tuning behaviour can adjust a single value.
-DEFAULT_HTTP_TIMEOUT = 30.0
+# Connection pool limits for the standalone httpx client used by the config flow.
 DEFAULT_HTTP_KEEPALIVE = 5
 DEFAULT_HTTP_MAX_CONNECTIONS = 10
-DEFAULT_CHAT_TIMEOUT = 120.0
-DEFAULT_CHAT_STREAM_TIMEOUT = 300.0
-DEFAULT_TTS_TIMEOUT = 60.0
-DEFAULT_STT_TIMEOUT = 60.0
-DEFAULT_IMAGE_TIMEOUT = 120.0

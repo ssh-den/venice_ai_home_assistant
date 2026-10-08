@@ -13,36 +13,16 @@ from typing import Any
 
 import httpx
 
-_LOGGER = logging.getLogger(__name__)
+from .const import (
+    DEFAULT_HTTP_KEEPALIVE,
+    DEFAULT_HTTP_MAX_CONNECTIONS,
+    MAX_RETRIES,
+    RECOMMENDED_REQUEST_TIMEOUT,
+    RETRY_BASE_DELAY,
+    RETRY_MAX_DELAY,
+)
 
-# Import retry / timeout constants; fall back to hard-coded defaults when
-# const.py is not yet importable (e.g. during isolated unit tests).
-try:
-    from .const import (
-        DEFAULT_CHAT_STREAM_TIMEOUT,
-        DEFAULT_CHAT_TIMEOUT,
-        DEFAULT_HTTP_KEEPALIVE,  # QUAL-2: connection-pool sizing.
-        DEFAULT_HTTP_MAX_CONNECTIONS,  # QUAL-2: connection-pool sizing.
-        DEFAULT_HTTP_TIMEOUT,  # QUAL-2: tunable per-request timeout default.
-        DEFAULT_IMAGE_TIMEOUT,
-        DEFAULT_STT_TIMEOUT,
-        DEFAULT_TTS_TIMEOUT,
-        MAX_RETRIES,  # MED-4
-        RETRY_BASE_DELAY,
-        RETRY_MAX_DELAY,
-    )
-except ImportError:  # pragma: no cover
-    MAX_RETRIES = 3
-    RETRY_BASE_DELAY = 1.0
-    RETRY_MAX_DELAY = 30.0
-    DEFAULT_HTTP_TIMEOUT = 30.0
-    DEFAULT_HTTP_KEEPALIVE = 5
-    DEFAULT_HTTP_MAX_CONNECTIONS = 10
-    DEFAULT_CHAT_TIMEOUT = 120.0
-    DEFAULT_CHAT_STREAM_TIMEOUT = 300.0
-    DEFAULT_TTS_TIMEOUT = 60.0
-    DEFAULT_STT_TIMEOUT = 60.0
-    DEFAULT_IMAGE_TIMEOUT = 120.0
+_LOGGER = logging.getLogger(__name__)
 
 
 def _sanitize_header_value(value: str | None) -> str:
@@ -247,7 +227,7 @@ class ChatCompletions:
                 f"{self.client._base_url}/chat/completions",
                 headers=self.client._headers,
                 json=data,
-                timeout=DEFAULT_CHAT_STREAM_TIMEOUT,
+                timeout=self.client.timeout,
             )
             response = await self.client._http_client.send(request, stream=True)
             response.raise_for_status()
@@ -351,7 +331,7 @@ class ChatCompletions:
                 "/chat/completions",
                 headers=self.client._headers,
                 json=payload,
-                timeout=DEFAULT_CHAT_TIMEOUT,
+                timeout=self.client.timeout,
             )
             response.raise_for_status()
             result = response.json()
@@ -517,7 +497,7 @@ class Speech:
                 "/audio/speech",
                 headers=audio_headers,
                 json=data,
-                timeout=DEFAULT_TTS_TIMEOUT,
+                timeout=self.client.timeout,
             )
             response.raise_for_status()
             audio_data = response.content
@@ -581,7 +561,7 @@ class Speech:
                 "/audio/speech",
                 headers=audio_headers,
                 json=data,
-                timeout=DEFAULT_TTS_TIMEOUT,
+                timeout=self.client.timeout,
             )
             response.raise_for_status()
 
@@ -680,7 +660,7 @@ class Transcriptions:
                 headers=multipart_headers,
                 files=files,
                 data=data,
-                timeout=DEFAULT_STT_TIMEOUT,
+                timeout=self.client.timeout,
             )
             response.raise_for_status()
             _stt_elapsed = time.monotonic() - _stt_start
@@ -746,7 +726,7 @@ class Images:
                 "/images/generations",
                 headers=self.client._headers,
                 json=payload,
-                timeout=DEFAULT_IMAGE_TIMEOUT,
+                timeout=self.client.timeout,
             )
             response.raise_for_status()
             return response.json()
@@ -777,6 +757,7 @@ class AsyncVeniceAIClient:
         api_key: str,
         base_url: str = "https://api.venice.ai/api/v1",
         http_client: httpx.AsyncClient | None = None,
+        timeout: float = RECOMMENDED_REQUEST_TIMEOUT,
     ) -> None:
         """Initialize the client."""
         # SEC-1: store the credential unmodified so any diagnostics or
@@ -786,13 +767,12 @@ class AsyncVeniceAIClient:
         # into 401-rejected keys — regression in commit 64b115c.)
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
-        # QUAL-2 / PERF-4: pool sizing and default timeout sourced from constants
-        # so a single edit in const.py changes the whole client.
+        self.timeout = timeout
         self._http_client = (
             http_client
             if http_client
             else httpx.AsyncClient(
-                timeout=httpx.Timeout(DEFAULT_HTTP_TIMEOUT),
+                timeout=httpx.Timeout(timeout),
                 limits=httpx.Limits(
                     max_keepalive_connections=DEFAULT_HTTP_KEEPALIVE,
                     max_connections=DEFAULT_HTTP_MAX_CONNECTIONS,

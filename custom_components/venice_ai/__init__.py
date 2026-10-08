@@ -23,10 +23,12 @@ from .client import (
 )
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_REQUEST_TIMEOUT,
     CONF_STT_MODEL,
     CONF_TTS_MODEL,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_REQUEST_TIMEOUT,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_TTS_MODEL,
 )
@@ -271,6 +273,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     client = AsyncVeniceAIClient(
         api_key=entry.data[CONF_API_KEY],
         http_client=get_async_client(hass),
+        timeout=float(
+            entry.options.get(CONF_REQUEST_TIMEOUT, RECOMMENDED_REQUEST_TIMEOUT)
+        ),
     )
 
     try:

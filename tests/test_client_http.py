@@ -142,3 +142,16 @@ async def test_streaming_http_error_recorded() -> None:
             pass
     assert client.metrics.request_count == 1
     assert client.metrics.error_count == 1
+
+
+async def test_request_timeout_is_applied() -> None:
+    seen: list[dict[str, Any]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.extensions["timeout"])
+        return httpx.Response(200, json={"data": [{"url": "u"}]})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = AsyncVeniceAIClient(api_key="k", http_client=http_client, timeout=42.0)
+    await client.images.generate(model="m", prompt="p")
+    assert seen[0]["read"] == 42.0
