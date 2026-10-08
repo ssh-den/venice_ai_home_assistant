@@ -217,7 +217,7 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         config_entry: ConfigEntry,
     ) -> VeniceAIOptionsFlow:
         """Get the options flow for this handler."""
-        return VeniceAIOptionsFlow(config_entry)
+        return VeniceAIOptionsFlow()
 
 
 # ---------------------------------------------------------------------------
@@ -376,16 +376,6 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
     confusing and could result in lost settings if the user closed the
     second window.
     """
-
-    def __init__(self, config_entry: ConfigEntry) -> None:
-        """Initialize options flow."""
-        super().__init__()
-        self._config_entry = config_entry
-
-    @property
-    def config_entry(self) -> ConfigEntry:
-        """Return the config entry."""
-        return self._config_entry
 
     async def _fetch_model_metadata(
         self,
