@@ -64,8 +64,13 @@ def load_component_module(name: str) -> types.ModuleType:
 class FakeChunk:
     """Minimal stand-in for ``ChatCompletionChunk`` used by the service layer."""
 
-    def __init__(self, choices: list[dict[str, Any]]) -> None:
+    def __init__(
+        self,
+        choices: list[dict[str, Any]],
+        usage: dict[str, Any] | None = None,
+    ) -> None:
         self.choices = choices
+        self.usage = usage
 
 
 class FakeStream:

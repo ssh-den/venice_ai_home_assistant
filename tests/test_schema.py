@@ -125,32 +125,25 @@ class TestFormatVeniceSchema:
 class TestConvertSchemaToHashable:
     """Validate the hashable conversion used by ``voluptuous_openapi``."""
 
-    def test_dict_becomes_frozenset_of_items(self) -> None:
-        result = _convert_schema_to_hashable({"a": str})
-        assert isinstance(result, frozenset)
-        members = list(result)
-        assert ("a", str) in members
+    def test_dict_stays_dict(self) -> None:
+        assert _convert_schema_to_hashable({"a": str}) == {"a": str}
 
-    def test_list_becomes_tuple(self) -> None:
-        result = _convert_schema_to_hashable([str, int])
-        assert isinstance(result, tuple)
-        assert result == (str, int)
+    def test_list_stays_list(self) -> None:
+        assert _convert_schema_to_hashable([str, int]) == [str, int]
 
     def test_plain_type_passthrough(self) -> None:
         assert _convert_schema_to_hashable(str) is str
         assert _convert_schema_to_hashable(int) is int
 
     def test_nested_dict_and_list(self) -> None:
-        result = _convert_schema_to_hashable({"items": [str]})
-        assert isinstance(result, frozenset)
-        members = dict(result)
-        assert isinstance(members["items"], tuple)
-        assert members["items"] == (str,)
+        assert _convert_schema_to_hashable({"items": [str]}) == {"items": [str]}
 
     def test_empty_dict(self) -> None:
-        result = _convert_schema_to_hashable({})
-        assert isinstance(result, frozenset)
-        assert len(result) == 0
+        assert _convert_schema_to_hashable({}) == {}
+
+    def test_selector_value_becomes_str(self) -> None:
+        sel = _StubSelector()
+        assert _convert_schema_to_hashable({"a": sel}) == {"a": str}
 
 
 @pytest.mark.parametrize(
