@@ -159,33 +159,7 @@ class TestSanitizeHeaderValue:
         key = "sk-café-ñ-ü"
         assert client._sanitize_header_value(key) == "sk-café-ñ-ü"
 
-    def test_stored_api_key_is_unmodified(self) -> None:
-        """The client stores the raw key; only the header value is scrubbed.
-
-        Regression: commit 64b115c stored ``safe_api_key`` on
-        ``self._api_key``, so any code path that re-used the in-memory
-        key (diagnostics, re-auth round-trip, the Speech/Transcriptions
-        per-request headers) would re-mutate an already-mutated value.
-        """
-        import httpx
-
+    def test_client_sends_sanitized_key(self) -> None:
         raw_key = "  sk-AbCdEfGh1234567890  \n"
-        c = client.AsyncVeniceAIClient(api_key=raw_key, http_client=httpx.AsyncClient())
-        try:
-            # In-memory copy is byte-for-byte the user-provided value.
-            assert c._api_key == raw_key
-            # Header value has only CR/LF removed — surrounding whitespace
-            # is preserved so Venice sees the same key the user entered.
-            assert (
-                c._headers["Authorization"] == f"Bearer {raw_key.replace(chr(10), '')}"
-            )
-            assert "\n" not in c._headers["Authorization"]
-        finally:
-            import asyncio
-
-            asyncio.get_event_loop_policy()
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(c.close())
-            finally:
-                loop.close()
+        c = client.AsyncVeniceAIClient(api_key=raw_key)
+        assert c.sdk.api_key == "  sk-AbCdEfGh1234567890  "

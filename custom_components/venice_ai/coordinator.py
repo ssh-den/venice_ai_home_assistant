@@ -6,6 +6,7 @@ import logging
 from typing import Any, TypedDict
 
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .client import (
@@ -59,6 +60,13 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             "image_models": [],
             "voices": [],
         }
+
+        try:
+            await self.client.validate_api_key()
+        except AuthenticationError as err:
+            raise ConfigEntryAuthFailed("Invalid API key") from err
+        except VeniceAIError as err:
+            raise UpdateFailed(f"Venice AI is unavailable: {err}") from err
 
         try:
             text_models = await self.client.models.list(model_type="text")

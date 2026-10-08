@@ -29,7 +29,7 @@ async def test_setup_auth_failure(
     mock_config_entry: MockConfigEntry,
     mock_client: MagicMock,
 ) -> None:
-    mock_client.models.list.side_effect = AuthenticationError("bad key")
+    mock_client.validate_api_key.side_effect = AuthenticationError("bad key")
     assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.SETUP_ERROR
     assert any(mock_config_entry.async_get_active_flows(hass, {"reauth"}))
@@ -41,7 +41,7 @@ async def test_setup_not_ready(
     mock_config_entry: MockConfigEntry,
     mock_client: MagicMock,
 ) -> None:
-    mock_client.models.list.side_effect = NetworkError("down")
+    mock_client.validate_api_key.side_effect = NetworkError("down")
     assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
     assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 

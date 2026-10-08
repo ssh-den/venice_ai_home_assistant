@@ -119,18 +119,10 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                _LOGGER.debug("Validating Venice AI API key by fetching models")
-                async with AsyncVeniceAIClient(
-                    api_key=user_input[CONF_API_KEY]
-                ) as client:
-                    models_response = await client.models.list()
-                    if not isinstance(models_response, list):
-                        raise VeniceAIError("Invalid models response")
-
-                _LOGGER.debug(
-                    "API key validation successful, found %d models",
-                    len(models_response),
-                )
+                await AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY],
+                    http_client=get_async_client(self.hass),
+                ).validate_api_key()
 
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
@@ -170,15 +162,11 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             try:
-                _LOGGER.debug("Validating new Venice AI API key for re-auth")
-                async with AsyncVeniceAIClient(
-                    api_key=user_input[CONF_API_KEY]
-                ) as client:
-                    models_response = await client.models.list()
-                    if not isinstance(models_response, list):
-                        raise VeniceAIError("Invalid models response")
+                await AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY],
+                    http_client=get_async_client(self.hass),
+                ).validate_api_key()
 
-                _LOGGER.debug("Re-auth API key validation successful")
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
                 _LOGGER.warning("Venice AI re-authentication failed: invalid API key")

@@ -60,7 +60,7 @@ async def test_user_flow_errors(
     error: Exception,
     key: str,
 ) -> None:
-    mock_client.models.list.side_effect = error
+    mock_client.validate_api_key.side_effect = error
     result = await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": config_entries.SOURCE_USER}
     )

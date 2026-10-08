@@ -76,22 +76,5 @@ MAX_STT_BUFFER_SIZE = 10 * 1024 * 1024
 CONF_REQUEST_TIMEOUT = "request_timeout"
 RECOMMENDED_REQUEST_TIMEOUT = 120.0
 
-# Retry configuration constants (MED-4).
-# Extracted from client.py so they can be tuned without touching client logic.
+# Retries for transient API failures, handled by the OpenAI SDK
 MAX_RETRIES = 3
-RETRY_BASE_DELAY = 1.0
-RETRY_MAX_DELAY = 30.0
-
-
-# Feature minimum HA versions (MAINT-3).
-# Reference table for conditional feature activation and user-facing docs.
-FEATURE_MIN_VERSIONS: dict[str, str] = {
-    "ai_task": "2024.8.0",
-    "streaming_tts": "2024.4.0",
-    "conversation_entity": "2023.10.0",
-    "sensor_total_increasing": "2021.12.0",
-}
-
-# Connection pool limits for the standalone httpx client used by the config flow.
-DEFAULT_HTTP_KEEPALIVE = 5
-DEFAULT_HTTP_MAX_CONNECTIONS = 10

@@ -279,7 +279,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     )
 
     try:
-        await client.models.list()
+        await client.validate_api_key()
     except AuthenticationError as err:
         raise ConfigEntryAuthFailed("Invalid API key") from err
     except VeniceAIError as err:

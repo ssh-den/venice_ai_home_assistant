@@ -1,72 +1,63 @@
-"""Venice AI API Client."""
+"""Venice AI API client built on the OpenAI Python SDK.
+
+Venice exposes an OpenAI-compatible API, so transport, retries and SSE parsing
+are delegated to ``openai.AsyncOpenAI``. This module keeps a small facade that
+maps SDK errors to the integration's exception types, records usage metrics
+and passes Venice-specific parameters through ``extra_body``.
+"""
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncGenerator, Callable
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-import json
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
-import httpx
+import openai
 
-from .const import (
-    DEFAULT_HTTP_KEEPALIVE,
-    DEFAULT_HTTP_MAX_CONNECTIONS,
-    MAX_RETRIES,
-    RECOMMENDED_REQUEST_TIMEOUT,
-    RETRY_BASE_DELAY,
-    RETRY_MAX_DELAY,
-)
+from .const import MAX_RETRIES, RECOMMENDED_REQUEST_TIMEOUT
 
 _LOGGER = logging.getLogger(__name__)
 
+VENICE_BASE_URL = "https://api.venice.ai/api/v1"
+
+# Chat completion arguments the SDK accepts directly; anything else (for
+# example ``venice_parameters``) is sent through ``extra_body``.
+_CHAT_ARGS = frozenset(
+    {
+        "model",
+        "messages",
+        "max_tokens",
+        "temperature",
+        "top_p",
+        "tools",
+        "tool_choice",
+        "stream_options",
+        "response_format",
+    }
+)
+
 
 def _sanitize_header_value(value: str | None) -> str:
-    """SEC-1: strip CR/LF from a header value before it goes on the wire.
+    """Strip CR/LF from a header value before it goes on the wire.
 
-    Only the carriage-return and line-feed bytes are removed. We deliberately
-    do NOT:
-
-      * call ``.strip()`` — that would silently mutate a credential by
-        trimming leading/trailing whitespace (or NBSP/other Python-defined
-        whitespace), producing a byte-different key that authenticates
-        against Venice as "invalid" (regression seen in commit 64b115c,
-        which caused HTTP 401 on previously-valid keys).
-      * filter every char below 0x20 — Venice API keys are alphanumeric
-        today, but filtering by ord >= 0x20 plus a trailing .strip() was
-        the exact combination that broke valid keys. Header injection is
-        fully prevented by removing just ``\\r`` and ``\\n``; httpx itself
-        rejects any remaining control bytes on the wire.
-
-    The original, unmodified ``api_key`` is stored on ``self._api_key``;
-    this function is only applied at header-construction time so the
-    Authorization value is the credential byte-for-byte minus CR/LF.
+    Only carriage returns and line feeds are removed. The value is not
+    otherwise trimmed, since altering whitespace in an API key turns a valid
+    key into a rejected one.
     """
     if not value:
         return ""
     return value.replace("\r", "").replace("\n", "")
 
 
-# PERF-1: process-wide cache of model lists. Multiple client instances (e.g.
-# across config entries or per-test harnesses) reuse a single result for
-# CACHE_TTL_SECONDS. The cache stores plain dicts so it is independent of any
-# specific httpx client lifetime.
-_PROCESS_MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
-_PROCESS_MODEL_CACHE_TTL = 3600  # seconds; see also Models._CACHE_TTL_SECONDS
-
-
 @dataclass
 class VeniceAIMetrics:
-    """Lightweight in-memory usage/telemetry counters for a client instance.
+    """In-memory usage counters backing the diagnostic sensors.
 
-    These counters back the diagnostic sensor entities (LOW-4) so users can
-    monitor API usage, token consumption, and error rates without enabling
-    debug logging. All counters are cumulative for the lifetime of the client
-    (i.e. until the config entry is reloaded).
+    Counters are cumulative for the lifetime of the client, i.e. until the
+    config entry is reloaded.
     """
 
     request_count: int = 0
@@ -123,31 +114,21 @@ class AuthenticationError(VeniceAIError):
 
 
 class RateLimitError(VeniceAIError):
-    """Rate-limit error (HTTP 429) — the Venice AI API quota has been exceeded."""
+    """Rate-limit error (HTTP 429)."""
 
 
 class ServiceUnavailableError(VeniceAIError):
-    """Service unavailable error (HTTP 5xx) — Venice AI is temporarily down."""
+    """Venice AI is temporarily unavailable (HTTP 5xx)."""
 
 
 class NetworkError(VeniceAIError):
-    """Network-level error — could not reach the Venice AI API (timeout, connection refused, etc.)."""
+    """The Venice AI API could not be reached (timeout, connection error)."""
 
 
 def _categorize_http_error(
     status_code: int, error_detail: str, context: str = ""
 ) -> VeniceAIError:
-    """Return the most specific VeniceAIError subtype for an HTTP status code.
-
-    Centralises status-code → exception-type mapping so every API method raises
-    a consistent, typed exception.  Callers should ``raise ... from err`` the
-    returned instance directly.
-
-    Args:
-        status_code: The HTTP response status code.
-        error_detail: A human-readable description (from the response body).
-        context: Optional description of the operation, e.g. ``"fetching models"``.
-    """
+    """Return the most specific VeniceAIError subtype for an HTTP status code."""
     suffix = f" ({context})" if context else ""
     msg = f"HTTP error {status_code}{suffix}: {error_detail}"
     if status_code == 401:
@@ -159,308 +140,148 @@ def _categorize_http_error(
     return VeniceAIError(msg)
 
 
+def _error_message(err: openai.APIStatusError) -> str:
+    body = err.body
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict):
+            return str(error.get("message") or error)
+        return str(error)
+    return err.message
+
+
+def _convert_error(err: openai.OpenAIError, context: str) -> VeniceAIError:
+    """Map an OpenAI SDK exception to the integration's exception types."""
+    if isinstance(err, openai.APIStatusError):
+        return _categorize_http_error(err.status_code, _error_message(err), context)
+    if isinstance(err, openai.APIConnectionError):
+        return NetworkError(f"Request error ({context}): {err}")
+    return VeniceAIError(f"{context}: {err}")
+
+
 class ChatCompletionChunk:
-    """Chat completion chunk (used for streaming responses)."""
+    """A streamed chat completion chunk as plain data."""
 
     def __init__(self, data: dict[str, Any]) -> None:
-        """Initialize chat completion chunk."""
-        self.choices = data.get("choices", [])
-        # Populated in the final chunk when stream_options.include_usage=True
+        """Initialize the chunk from its JSON payload."""
+        self.choices: list[dict[str, Any]] = data.get("choices") or []
         self.usage: dict[str, Any] | None = data.get("usage")
 
 
+def _split_chat_args(payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split a chat payload into SDK arguments and Venice ``extra_body``."""
+    args: dict[str, Any] = {}
+    extra: dict[str, Any] = {}
+    for key, value in payload.items():
+        if value is None or key == "stream":
+            continue
+        if key in _CHAT_ARGS:
+            args[key] = value
+        else:
+            extra[key] = value
+    return args, extra
+
+
 class ChatCompletions:
-    """Chat completions API for Venice AI."""
+    """Chat completions API."""
 
     def __init__(self, client: AsyncVeniceAIClient) -> None:
         """Initialize chat completions."""
         self.client = client
-        # Allow both client.chat.create_non_streaming(...) and
-        # client.chat.completions.create_non_streaming(...) — the latter mirrors
-        # the OpenAI SDK's chat.completions namespace and is the preferred form.
         self.completions = self
 
     @asynccontextmanager
     async def create(
-        self,
-        model: str,
-        messages: list[dict[str, Any]],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-        venice_parameters: dict[str, Any] | None = None,
-        tools: list[dict[str, Any]] | None = None,
-        tool_choice: str | dict[str, Any] | None = None,
-        stream_options: dict[str, Any] | None = None,
-    ) -> AsyncGenerator[AsyncGenerator[ChatCompletionChunk]]:
-        """Create a streaming chat completion."""
-        data: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "stream": True,
-        }
-        if max_tokens is not None:
-            data["max_tokens"] = max_tokens
-        if temperature is not None:
-            data["temperature"] = temperature
-        if top_p is not None:
-            data["top_p"] = top_p
-        if venice_parameters is not None:
-            data["venice_parameters"] = venice_parameters
-        if tools is not None:
-            data["tools"] = tools
-        if tool_choice is not None:
-            data["tool_choice"] = tool_choice
-        if stream_options is not None:
-            data["stream_options"] = stream_options
-
-        response: httpx.Response | None = None
-        _connect_start = time.monotonic()
-        _LOGGER.debug(
-            "[PERF-HTTP] POST /chat/completions (stream) — opening connection"
-        )
+        self, **kwargs: Any
+    ) -> AsyncGenerator[AsyncIterator[ChatCompletionChunk]]:
+        """Open a streaming chat completion."""
+        args, extra = _split_chat_args(kwargs)
         metrics = self.client.metrics
         metrics.record_request()
         try:
-            request = self.client._http_client.build_request(
-                "POST",
-                f"{self.client._base_url}/chat/completions",
-                headers=self.client._headers,
-                json=data,
-                timeout=self.client.timeout,
+            stream = await self.client.sdk.chat.completions.create(
+                **args, stream=True, extra_body=extra or None
             )
-            response = await self.client._http_client.send(request, stream=True)
-            response.raise_for_status()
-            _LOGGER.debug(
-                "[PERF-HTTP] POST /chat/completions (stream) → HTTP %d, connection established in %.3fs",
-                response.status_code,
-                time.monotonic() - _connect_start,
-            )
+        except openai.OpenAIError as err:
+            converted = _convert_error(err, "streaming chat")
+            metrics.record_error(converted)
+            raise converted from err
 
-        except httpx.HTTPStatusError as err:
-            if response is not None:
-                await response.aclose()
-            error_detail = ""
-            with suppress(Exception):
-                error_detail = err.response.text
-            _LOGGER.error(
-                "Venice AI HTTP error %s: %s", err.response.status_code, error_detail
-            )
-            categorized = _categorize_http_error(
-                err.response.status_code, error_detail, "streaming chat"
-            )
-            metrics.record_error(categorized)
-            raise categorized from err
-        except httpx.RequestError as err:
-            if response is not None:
-                await response.aclose()
-            _LOGGER.error("Venice AI request error: %s", err)
-            network_err = NetworkError(f"Request error (streaming chat): {err}")
-            metrics.record_error(network_err)
-            raise network_err from err
-
-        async def _stream() -> AsyncGenerator[ChatCompletionChunk]:
-            _chunk_count = 0
-            _stream_start = time.monotonic()
+        async def _chunks() -> AsyncIterator[ChatCompletionChunk]:
             try:
-                async for line in response.aiter_lines():
-                    if not line or line == "data: [DONE]":
-                        continue
-                    if line.startswith("data: "):
-                        try:
-                            chunk_data = json.loads(line[6:])
-                            _chunk_count += 1
-                            chunk = ChatCompletionChunk(chunk_data)
-                            if chunk.usage:
-                                metrics.record_usage(chunk.usage)
-                            yield chunk
-                        except json.JSONDecodeError:
-                            _LOGGER.warning("Failed to decode stream chunk: %s", line)
-                    else:
-                        _LOGGER.warning("Received unexpected line in stream: %s", line)
-                _LOGGER.debug(
-                    "[PERF-HTTP] POST /chat/completions stream finished — %d chunks in %.3fs",
-                    _chunk_count,
-                    time.monotonic() - _stream_start,
-                )
-            except httpx.TransportError as err:
-                # Convert mid-stream transport failures (connection reset, server close,
-                # timeout) to a typed NetworkError so callers get consistent exceptions.
-                _LOGGER.error("Stream interrupted by transport error: %s", err)
-                network_err = NetworkError(f"Stream interrupted: {err}")
-                metrics.record_error(network_err)
-                raise network_err from err
-            finally:
-                if response is not None:
-                    await response.aclose()
-
-        yield _stream()
-
-    async def create_non_streaming(
-        self,
-        payload: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """Create a non-streaming chat completion.
-
-        Accepts either a pre-built payload dict (legacy positional form) or
-        keyword arguments matching the OpenAI chat-completions API parameters
-        (e.g. model=, messages=, max_tokens=, temperature=, top_p=, tools=).
-        Both calling conventions are equivalent:
-
-            # dict form (legacy):
-            await client.chat.completions.create_non_streaming(
-                {"model": "...", "messages": [...]}
-            )
-
-            # keyword form (preferred, mirrors OpenAI SDK):
-            await client.chat.completions.create_non_streaming(
-                model="...", messages=[...]
-            )
-        """
-        if payload is None:
-            payload = {}
-        # Merge keyword arguments; kwargs take precedence over dict keys.
-        if kwargs:
-            payload = {**payload, **kwargs}
-        payload = {**payload, "stream": False}
+                async for raw in stream:
+                    chunk = ChatCompletionChunk(raw.model_dump(exclude_none=True))
+                    if chunk.usage:
+                        metrics.record_usage(chunk.usage)
+                    yield chunk
+            except openai.OpenAIError as err:
+                converted = _convert_error(err, "streaming chat")
+                metrics.record_error(converted)
+                raise converted from err
 
         try:
-            response = await self.client._async_request_with_retry(
-                "POST",
-                "/chat/completions",
-                headers=self.client._headers,
-                json=payload,
-                timeout=self.client.timeout,
-            )
-            response.raise_for_status()
-            result = response.json()
-            # Accumulate token usage for the diagnostic sensors (LOW-4).
-            if isinstance(result, dict):
-                self.client.metrics.record_usage(result.get("usage"))
-            return result
+            yield _chunks()
+        finally:
+            await stream.close()
 
-        except httpx.HTTPStatusError as err:
-            error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error(
-                "Venice AI HTTP error %s: %s", err.response.status_code, error_detail
-            )
-            # Try to extract a human-readable message from the JSON error body.
-            error_message = error_detail
-            if error_detail:
-                try:
-                    error_json = json.loads(error_detail)
-                    if isinstance(error_json.get("error"), dict):
-                        error_message = error_json["error"].get("message", error_detail)
-                    elif isinstance(error_json.get("error"), str):
-                        error_message = error_json["error"]
-                except json.JSONDecodeError:
-                    pass
-            raise _categorize_http_error(
-                err.response.status_code, error_message, "chat completion"
-            ) from err
-
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI request error: %s", err)
-            raise NetworkError(f"Request error (chat completion): {err}") from err
-
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode non-streaming JSON response: %s", err.doc)
-            decode_err = VeniceAIError(f"Failed to decode API response: {err.doc}")
-            self.client.metrics.record_error(decode_err)
-            raise decode_err from err
+    async def create_non_streaming(
+        self, payload: dict[str, Any] | None = None, **kwargs: Any
+    ) -> dict[str, Any]:
+        """Create a non-streaming chat completion and return it as a dict."""
+        args, extra = _split_chat_args({**(payload or {}), **kwargs})
+        result = await self.client.call(
+            "chat completion",
+            self.client.sdk.chat.completions.create(
+                **args, stream=False, extra_body=extra or None
+            ),
+        )
+        data = result.model_dump(exclude_none=True)
+        self.client.metrics.record_usage(data.get("usage"))
+        return data
 
 
 class Models:
-    """Models API for Venice AI with TTL caching."""
+    """Models API with a short-lived cache."""
 
-    _CACHE_TTL_SECONDS = 3600  # 1 hour
+    _CACHE_TTL_SECONDS = 3600
 
     def __init__(self, client: AsyncVeniceAIClient) -> None:
-        """Initialize models API."""
+        """Initialize the models API."""
         self.client = client
-        self._cache: dict[str, tuple[list[dict], float]] = {}
+        self._cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
-    async def list(self, model_type: str = "text") -> list[dict]:
-        """List available models with TTL caching.
-
-        PERF-1: consults a process-wide cache first so multiple client
-        instances (config entries, tests) share one network round-trip per
-        model_type per TTL window. Falls back to the per-instance cache
-        (``self._cache``) and then to the live API if both are cold.
-        """
-        now = time.monotonic()
-        # PERF-1: process-wide cache check (keyed by model_type)
-        global_cached = _PROCESS_MODEL_CACHE.get(model_type)
-        if global_cached is not None:
-            timestamp, models = global_cached
-            if now - timestamp < _PROCESS_MODEL_CACHE_TTL:
-                _LOGGER.debug(
-                    "PERF-1: process-wide cache hit for %s models (%d entries)",
-                    model_type,
-                    len(models),
-                )
-                return models
+    async def list(self, model_type: str = "text") -> list[dict[str, Any]]:
+        """List models of the given Venice type."""
         cached = self._cache.get(model_type)
-        if cached is not None:
-            models, timestamp = cached
-            if now - timestamp < self._CACHE_TTL_SECONDS:
-                _LOGGER.debug(
-                    "Returning cached %s models (%d entries, age=%.0fs)",
-                    model_type,
-                    len(models),
-                    now - timestamp,
-                )
-                return models
-            _LOGGER.debug("Cache expired for %s models, fetching fresh", model_type)
-
-        url = f"{self.client._base_url}/models"
-        _LOGGER.debug("Attempting to fetch %s models from URL: %s", model_type, url)
-        try:
-            response = await self.client._async_request_with_retry(
-                "GET",
-                "/models",
-                headers=self.client._headers,
-                params={"type": model_type},
-            )
-            response.raise_for_status()
-            model_data = response.json()
-            models = model_data.get("data", [])
-            self._cache[model_type] = (models, now)
-            # PERF-1: write through to process-wide cache so other clients in
-            # the same Python process can reuse this result.
-            _PROCESS_MODEL_CACHE[model_type] = (now, models)
-            _LOGGER.debug("Successfully fetched %d %s models", len(models), model_type)
-            return models
-        except httpx.HTTPStatusError as err:
-            error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error(
-                "Venice AI Models API HTTP error %s: %s",
-                err.response.status_code,
-                error_detail,
-            )
-            raise _categorize_http_error(
-                err.response.status_code, error_detail, "fetching models"
-            ) from err
-        except httpx.RequestError as err:
-            _LOGGER.error(
-                "Venice AI Models API request error: %s (URL: %s, type: %s)",
-                err,
-                url,
-                type(err).__name__,
-            )
-            raise NetworkError(f"Request error fetching models: {err}") from err
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode models JSON response: %s", err.doc)
-            raise VeniceAIError("Failed to decode models API response") from err
+        now = time.monotonic()
+        if cached and now - cached[0] < self._CACHE_TTL_SECONDS:
+            return cached[1]
+        page = await self.client.call(
+            "fetching models",
+            self.client.sdk.models.list(extra_query={"type": model_type}),
+        )
+        models = [model.model_dump() for model in page.data]
+        self._cache[model_type] = (now, models)
+        return models
 
 
 class Speech:
-    """Speech API for Venice AI."""
+    """Text-to-speech API."""
 
     def __init__(self, client: AsyncVeniceAIClient) -> None:
-        """Initialize speech API."""
+        """Initialize the speech API."""
         self.client = client
+
+    def _args(
+        self, text: str, voice: str, model: str, audio_output: str, speed: float
+    ) -> dict[str, Any]:
+        return {
+            "input": text,
+            "model": model,
+            "voice": voice,
+            "response_format": cast(Any, audio_output),
+            "speed": speed,
+        }
 
     async def generate(
         self,
@@ -470,68 +291,14 @@ class Speech:
         audio_output: str = "mp3",
         speed: float = 1.0,
     ) -> bytes:
-        """Generate speech audio from text (non-streaming)."""
-        data = {
-            "input": text,
-            "model": model,
-            "voice": voice,
-            "response_format": audio_output,
-            "speed": speed,
-        }
-
-        audio_headers = {
-            "Authorization": f"Bearer {self.client._api_key}",
-        }
-
-        _gen_start = time.monotonic()
-        _LOGGER.debug(
-            "[PERF-HTTP] POST /audio/speech (non-streaming) — model=%s, voice=%s, format=%s, text=%d chars",
-            model,
-            voice,
-            audio_output,
-            len(text),
+        """Generate speech audio from text."""
+        response = await self.client.call(
+            "generating speech",
+            self.client.sdk.audio.speech.create(
+                **self._args(text, voice, model, audio_output, speed)
+            ),
         )
-        try:
-            response = await self.client._async_request_with_retry(
-                "POST",
-                "/audio/speech",
-                headers=audio_headers,
-                json=data,
-                timeout=self.client.timeout,
-            )
-            response.raise_for_status()
-            audio_data = response.content
-            _gen_elapsed = time.monotonic() - _gen_start
-            _bytes_per_sec = len(audio_data) / _gen_elapsed if _gen_elapsed > 0 else 0.0
-            _LOGGER.debug(
-                "[PERF-HTTP] POST /audio/speech (non-streaming) — complete: %d bytes in %.3fs (%.0f bytes/s)",
-                len(audio_data),
-                _gen_elapsed,
-                _bytes_per_sec,
-            )
-            return audio_data
-
-        except httpx.HTTPStatusError as err:
-            error_detail = "Unknown error"
-            try:
-                if err.response.headers.get("content-type", "").startswith("audio/"):
-                    error_detail = f"HTTP {err.response.status_code} for audio request"
-                else:
-                    error_detail = err.response.text[:500]
-            except (httpx.StreamError, UnicodeDecodeError):
-                error_detail = f"HTTP {err.response.status_code}"
-
-            _LOGGER.error(
-                "Venice AI Speech API HTTP error %s: %s",
-                err.response.status_code,
-                error_detail,
-            )
-            raise _categorize_http_error(
-                err.response.status_code, error_detail, "generating speech"
-            ) from err
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise NetworkError(f"Request error generating speech: {err}") from err
+        return response.content
 
     async def generate_streaming(
         self,
@@ -540,89 +307,28 @@ class Speech:
         model: str = "tts-kokoro",
         audio_output: str = "mp3",
         speed: float = 1.0,
-    ) -> AsyncGenerator[bytes]:
-        """Generate speech audio from text with streaming chunks."""
-        data = {
-            "input": text,
-            "model": model,
-            "voice": voice,
-            "response_format": audio_output,
-            "speed": speed,
-            "streaming": True,
-        }
-
-        audio_headers = {
-            "Authorization": f"Bearer {self.client._api_key}",
-        }
-
+    ) -> AsyncIterator[bytes]:
+        """Generate speech audio, yielding chunks as they arrive."""
+        metrics = self.client.metrics
+        metrics.record_request()
         try:
-            response = await self.client._async_request_with_retry(
-                "POST",
-                "/audio/speech",
-                headers=audio_headers,
-                json=data,
-                timeout=self.client.timeout,
-            )
-            response.raise_for_status()
-
-            _tts_stream_start = time.monotonic()
-            _tts_first_chunk_t: float | None = None
-            _tts_chunk_count = 0
-            _tts_total_bytes = 0
-            _LOGGER.debug(
-                "[PERF-HTTP] POST /audio/speech (stream) — connection established, streaming chunks"
-            )
-            try:
-                async for chunk in response.aiter_bytes():
-                    if _tts_first_chunk_t is None:
-                        _tts_first_chunk_t = time.monotonic() - _tts_stream_start
-                        _LOGGER.debug(
-                            "[PERF-HTTP] POST /audio/speech (stream) — first audio chunk received in %.3fs",
-                            _tts_first_chunk_t,
-                        )
-                    _tts_chunk_count += 1
-                    _tts_total_bytes += len(chunk)
+            async with self.client.sdk.audio.speech.with_streaming_response.create(
+                **self._args(text, voice, model, audio_output, speed),
+                extra_body={"streaming": True},
+            ) as response:
+                async for chunk in response.iter_bytes():
                     yield chunk
-                _LOGGER.debug(
-                    "[PERF-HTTP] POST /audio/speech (stream) — complete: %d chunks, %d bytes total in %.3fs",
-                    _tts_chunk_count,
-                    _tts_total_bytes,
-                    time.monotonic() - _tts_stream_start,
-                )
-            except httpx.TransportError as err:
-                _LOGGER.error("Streaming TTS transport error: %s", err)
-                raise NetworkError(f"Streaming TTS interrupted: {err}") from err
-
-        except httpx.HTTPStatusError as err:
-            error_detail = "Unknown error"
-            try:
-                if err.response.headers.get("content-type", "").startswith("audio/"):
-                    error_detail = f"HTTP {err.response.status_code} for audio request"
-                else:
-                    error_detail = err.response.text[:500]
-            except (httpx.StreamError, UnicodeDecodeError):
-                error_detail = f"HTTP {err.response.status_code}"
-
-            _LOGGER.error(
-                "Venice AI Speech API HTTP error %s: %s",
-                err.response.status_code,
-                error_detail,
-            )
-            raise _categorize_http_error(
-                err.response.status_code, error_detail, "streaming speech"
-            ) from err
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI Speech API request error: %s", err)
-            raise NetworkError(
-                f"Request error generating streaming speech: {err}"
-            ) from err
+        except openai.OpenAIError as err:
+            converted = _convert_error(err, "streaming speech")
+            metrics.record_error(converted)
+            raise converted from err
 
 
 class Transcriptions:
-    """Transcriptions API for Venice AI."""
+    """Speech-to-text API."""
 
     def __init__(self, client: AsyncVeniceAIClient) -> None:
-        """Initialize transcriptions API."""
+        """Initialize the transcriptions API."""
         self.client = client
 
     async def create(
@@ -632,71 +338,26 @@ class Transcriptions:
         response_format: str = "json",
         timestamps: bool = False,
     ) -> dict[str, Any]:
-        """Create a transcription from audio data."""
-        files = {
-            "file": ("audio.wav", audio_data, "audio/wav"),
-        }
-        data = {
-            "model": model,
-            "response_format": response_format,
-            "timestamps": str(timestamps).lower(),
-        }
-
-        multipart_headers = {
-            "Authorization": f"Bearer {self.client._api_key}",
-        }
-
-        _stt_start = time.monotonic()
-        _LOGGER.debug(
-            "[PERF-HTTP] POST /audio/transcriptions — model=%s, format=%s, audio=%d bytes",
-            model,
-            response_format,
-            len(audio_data),
+        """Transcribe WAV audio."""
+        result: Any = await self.client.call(
+            "creating transcription",
+            self.client.sdk.audio.transcriptions.create(
+                file=("audio.wav", audio_data, "audio/wav"),
+                model=model,
+                response_format=cast(Any, response_format),
+                extra_body={"timestamps": str(timestamps).lower()},
+            ),
         )
-        try:
-            response = await self.client._async_request_with_retry(
-                "POST",
-                "/audio/transcriptions",
-                headers=multipart_headers,
-                files=files,
-                data=data,
-                timeout=self.client.timeout,
-            )
-            response.raise_for_status()
-            _stt_elapsed = time.monotonic() - _stt_start
-            _LOGGER.debug(
-                "[PERF-HTTP] POST /audio/transcriptions — complete in %.3fs (HTTP %d)",
-                _stt_elapsed,
-                response.status_code,
-            )
-            if response_format == "json":
-                return response.json()
-            else:
-                return {"text": response.text}
-
-        except httpx.HTTPStatusError as err:
-            error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error(
-                "Venice AI Transcriptions API HTTP error %s: %s",
-                err.response.status_code,
-                error_detail,
-            )
-            raise _categorize_http_error(
-                err.response.status_code, error_detail, "creating transcription"
-            ) from err
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
-            raise NetworkError(f"Request error creating transcription: {err}") from err
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode transcriptions JSON response: %s", err.doc)
-            raise VeniceAIError("Failed to decode transcriptions API response") from err
+        if isinstance(result, str):
+            return {"text": result}
+        return cast(dict[str, Any], result.model_dump())
 
 
 class Images:
-    """Images API for Venice AI."""
+    """Image generation API."""
 
     def __init__(self, client: AsyncVeniceAIClient) -> None:
-        """Initialize images API."""
+        """Initialize the images API."""
         self.client = client
 
     async def generate(
@@ -709,210 +370,82 @@ class Images:
         response_format: str = "url",
         n: int = 1,
     ) -> dict[str, Any]:
-        """Generate an image with Venice AI."""
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "size": size,
-            "quality": quality,
-            "style": style,
-            "response_format": response_format,
-            "n": n,
-        }
-
-        try:
-            response = await self.client._async_request_with_retry(
-                "POST",
-                "/images/generations",
-                headers=self.client._headers,
-                json=payload,
-                timeout=self.client.timeout,
-            )
-            response.raise_for_status()
-            return response.json()
-
-        except httpx.HTTPStatusError as err:
-            error_detail = getattr(err.response, "text", str(err))
-            _LOGGER.error(
-                "Venice AI Images API HTTP error %s: %s",
-                err.response.status_code,
-                error_detail,
-            )
-            raise _categorize_http_error(
-                err.response.status_code, error_detail, "generating image"
-            ) from err
-        except httpx.RequestError as err:
-            _LOGGER.error("Venice AI Images API request error: %s", err)
-            raise NetworkError(f"Request error generating image: {err}") from err
-        except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode images JSON response: %s", err.doc)
-            raise VeniceAIError("Failed to decode images API response") from err
+        """Generate an image."""
+        result = await self.client.call(
+            "generating image",
+            self.client.sdk.images.generate(
+                model=model,
+                prompt=prompt,
+                size=cast(Any, size),
+                quality=cast(Any, quality),
+                style=cast(Any, style),
+                response_format=cast(Any, response_format),
+                n=n,
+            ),
+        )
+        return result.model_dump(exclude_none=True)
 
 
 class AsyncVeniceAIClient:
-    """Async client for the Venice AI API using httpx."""
+    """Async client for the Venice AI API."""
 
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.venice.ai/api/v1",
-        http_client: httpx.AsyncClient | None = None,
+        base_url: str = VENICE_BASE_URL,
+        http_client: Any = None,
         timeout: float = RECOMMENDED_REQUEST_TIMEOUT,
     ) -> None:
-        """Initialize the client."""
-        # SEC-1: store the credential unmodified so any diagnostics or
-        # re-auth round-trip sees the user-provided value. The CR/LF-only
-        # scrub is applied at header-construction time below. (Previous
-        # code mutated the key via .strip(), which turned valid keys
-        # into 401-rejected keys — regression in commit 64b115c.)
-        self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
+        """Initialize the client.
+
+        ``http_client`` should be Home Assistant's shared async HTTP client;
+        it is never closed by this client.
+        """
         self.timeout = timeout
-        self._http_client = (
-            http_client
-            if http_client
-            else httpx.AsyncClient(
-                timeout=httpx.Timeout(timeout),
-                limits=httpx.Limits(
-                    max_keepalive_connections=DEFAULT_HTTP_KEEPALIVE,
-                    max_connections=DEFAULT_HTTP_MAX_CONNECTIONS,
-                ),
-            )
-        )
-        self._should_close_client = not http_client
-        self._closed = False
-
-        # In-memory usage/telemetry counters backing the diagnostic sensor
-        # entities (LOW-4). Shared across all sub-API helpers via ``self``.
         self.metrics = VeniceAIMetrics()
-
-        self._headers = {
-            "Authorization": f"Bearer {_sanitize_header_value(api_key)}",
-            "Content-Type": "application/json",
-            "Accept-Encoding": "gzip, br",
-        }
+        self._owns_http_client = http_client is None
+        self.sdk = openai.AsyncOpenAI(
+            api_key=_sanitize_header_value(api_key),
+            base_url=base_url,
+            http_client=http_client,
+            timeout=timeout,
+            max_retries=MAX_RETRIES,
+        )
         self.chat = ChatCompletions(self)
         self.models = Models(self)
         self.speech = Speech(self)
         self.transcriptions = Transcriptions(self)
         self.images = Images(self)
 
-    async def _async_request_with_retry(
-        self,
-        method: str,
-        endpoint: str,
-        **kwargs: Any,
-    ) -> httpx.Response:
-        """Make an HTTP request with exponential backoff retry for transient failures.
-
-        Retry configuration is sourced from the module-level constants
-        MAX_RETRIES, RETRY_BASE_DELAY, and RETRY_MAX_DELAY (defined in
-        const.py — MED-4) so they can be tuned without touching this method.
-        """
-        retryable_statuses = {429, 500, 502, 503}
-        url = f"{self._base_url}{endpoint}"
-        _req_start = time.monotonic()
+    async def call(self, context: str, request: Any) -> Any:
+        """Await an SDK request, recording metrics and converting errors."""
         self.metrics.record_request()
+        try:
+            return await request
+        except openai.OpenAIError as err:
+            converted = _convert_error(err, context)
+            self.metrics.record_error(converted)
+            raise converted from err
 
-        for attempt in range(MAX_RETRIES + 1):
-            _attempt_start = time.monotonic()
-            if attempt == 0:
-                _LOGGER.debug("[PERF-HTTP] %s %s — sending request", method, endpoint)
-            else:
-                _LOGGER.debug(
-                    "[PERF-HTTP] %s %s — retry attempt %d/%d",
-                    method,
-                    endpoint,
-                    attempt + 1,
-                    MAX_RETRIES + 1,
-                )
-            try:
-                response = await self._http_client.request(method, url, **kwargs)
-                _attempt_elapsed = time.monotonic() - _attempt_start
+    async def validate_api_key(self) -> None:
+        """Raise AuthenticationError if the API key is not accepted.
 
-                if response.status_code in retryable_statuses and attempt < MAX_RETRIES:
-                    # Fully consume response body to free connection before retry
-                    with suppress(Exception):
-                        await response.aread()
-                    delay = min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY)
-                    _LOGGER.warning(
-                        "[PERF-HTTP] %s %s → HTTP %d in %.3fs; retrying in %.1fs (attempt %d/%d)",
-                        method,
-                        endpoint,
-                        response.status_code,
-                        _attempt_elapsed,
-                        delay,
-                        attempt + 1,
-                        MAX_RETRIES,
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                _LOGGER.debug(
-                    "[PERF-HTTP] %s %s → HTTP %d in %.3fs%s",
-                    method,
-                    endpoint,
-                    response.status_code,
-                    _attempt_elapsed,
-                    (
-                        f" ({attempt} retr{'y' if attempt == 1 else 'ies'}, {time.monotonic() - _req_start:.3f}s total)"
-                        if attempt > 0
-                        else ""
-                    ),
-                )
-                if response.is_error:
-                    self.metrics.record_error(
-                        _categorize_http_error(
-                            response.status_code, response.reason_phrase, endpoint
-                        )
-                    )
-                return response
-
-            except (
-                httpx.TimeoutException,
-                httpx.NetworkError,
-                httpx.RemoteProtocolError,
-            ) as err:
-                _attempt_elapsed = time.monotonic() - _attempt_start
-                if attempt < MAX_RETRIES:
-                    delay = min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY)
-                    _LOGGER.warning(
-                        "[PERF-HTTP] %s %s → %s after %.3fs; retrying in %.1fs (attempt %d/%d)",
-                        method,
-                        endpoint,
-                        type(err).__name__,
-                        _attempt_elapsed,
-                        delay,
-                        attempt + 1,
-                        MAX_RETRIES,
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    _LOGGER.warning(
-                        "[PERF-HTTP] %s %s → %s after %.3fs; max retries exhausted (%.3fs total)",
-                        method,
-                        endpoint,
-                        type(err).__name__,
-                        _attempt_elapsed,
-                        time.monotonic() - _req_start,
-                    )
-                    network_err = NetworkError(f"Max retries exceeded: {err}")
-                    self.metrics.record_error(network_err)
-                    raise network_err from err
-
-        # Should never reach here; all retry attempts exhausted
-        raise NetworkError("Max retries exceeded")
+        The models endpoint is public, so an authenticated endpoint is used.
+        """
+        await self.call(
+            "validating API key",
+            self.sdk.get("/api_keys/rate_limits", cast_to=object),
+        )
 
     async def close(self) -> None:
-        """Close the httpx client if it was created internally."""
-        if self._closed:
-            return
-        self._closed = True
-        if self._should_close_client:
-            await self._http_client.aclose()
+        """Close the HTTP client if this client created it."""
+        if self._owns_http_client:
+            await self.sdk.close()
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> AsyncVeniceAIClient:
+        """Enter the async context."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, *exc_info: object) -> None:
+        """Close the client on exit."""
         await self.close()

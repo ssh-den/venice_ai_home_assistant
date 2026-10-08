@@ -70,6 +70,7 @@ def mock_client() -> Generator[MagicMock]:
     client = MagicMock()
     client.metrics = VeniceAIMetrics()
     client.close = AsyncMock()
+    client.validate_api_key = AsyncMock()
 
     async def _list(model_type: str = "text") -> list[dict[str, Any]]:
         return [dict(m) for m in MODELS_BY_TYPE.get(model_type, [])]
