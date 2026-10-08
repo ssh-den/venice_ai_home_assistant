@@ -1,84 +1,77 @@
-"""Tests for the tool schema conversion helpers in ``conversation.py``."""
+"""Tests for formatting Home Assistant LLM tools for the Venice AI API."""
 
 from __future__ import annotations
 
-from homeassistant.helpers import selector
-import pytest
+from typing import Any
 
-from custom_components.venice_ai.conversation import (
-    _convert_schema_to_hashable,
-    _format_venice_schema,
-)
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import config_validation as cv, llm, selector
+from homeassistant.util.json import JsonObjectType
+import voluptuous as vol
 
-
-class TestFormatVeniceSchema:
-    """Validate the per-key type mapping in ``_format_venice_schema``."""
-
-    def test_string_mapping(self) -> None:
-        schema = _format_venice_schema({"name": str})
-        assert schema == {"name": {"type": "string"}}
-
-    def test_int_mapping(self) -> None:
-        schema = _format_venice_schema({"count": int})
-        assert schema == {"count": {"type": "integer"}}
-
-    def test_float_mapping(self) -> None:
-        schema = _format_venice_schema({"score": float})
-        assert schema == {"score": {"type": "number"}}
-
-    def test_bool_mapping(self) -> None:
-        schema = _format_venice_schema({"enabled": bool})
-        assert schema == {"enabled": {"type": "boolean"}}
-
-    def test_unknown_type_defaults_to_string(self) -> None:
-        class Custom:
-            pass
-
-        schema = _format_venice_schema({"thing": Custom})
-        assert schema == {"thing": {"type": "string"}}
-
-    def test_multiple_keys(self) -> None:
-        schema = _format_venice_schema({"a": str, "b": int})
-        assert schema == {"a": {"type": "string"}, "b": {"type": "integer"}}
-
-    def test_empty_schema(self) -> None:
-        assert not _format_venice_schema({})
+from custom_components.venice_ai.conversation import _format_tool
 
 
-class TestConvertSchemaToHashable:
-    """Validate the hashable conversion used by ``voluptuous_openapi``."""
+class _Tool(llm.Tool):
+    def __init__(self, parameters: vol.Schema, description: str | None) -> None:
+        self.name = "test_tool"
+        self.description = description
+        self.parameters = parameters
 
-    def test_dict_stays_dict(self) -> None:
-        assert _convert_schema_to_hashable({"a": str}) == {"a": str}
-
-    def test_list_stays_list(self) -> None:
-        assert _convert_schema_to_hashable([str, int]) == [str, int]
-
-    def test_plain_type_passthrough(self) -> None:
-        assert _convert_schema_to_hashable(str) is str
-        assert _convert_schema_to_hashable(int) is int
-
-    def test_nested_dict_and_list(self) -> None:
-        assert _convert_schema_to_hashable({"items": [str]}) == {"items": [str]}
-
-    def test_empty_dict(self) -> None:
-        assert _convert_schema_to_hashable({}) == {}
-
-    def test_selector_value_becomes_str(self) -> None:
-        sel = selector.TextSelector()
-        assert _convert_schema_to_hashable({"a": sel}) == {"a": str}
+    async def async_call(
+        self,
+        hass: HomeAssistant,
+        tool_input: llm.ToolInput,
+        llm_context: llm.LLMContext,
+    ) -> JsonObjectType:
+        return {}
 
 
-@pytest.mark.parametrize(
-    ("input_value", "expected_type"),
-    [
-        (str, "string"),
-        (int, "integer"),
-        (float, "number"),
-        (bool, "boolean"),
-    ],
-)
-def test_schema_type_mapping_param(input_value: type, expected_type: str) -> None:
-    """Parametrised regression test for the JSON-schema type mapping."""
-    schema = _format_venice_schema({"value": input_value})
-    assert schema["value"]["type"] == expected_type
+def _params(schema: dict[Any, Any]) -> dict[str, Any]:
+    tool = _Tool(vol.Schema(schema), "desc")
+    return _format_tool(tool, llm.selector_serializer)["function"]["parameters"]
+
+
+def test_function_envelope() -> None:
+    tool = _Tool(vol.Schema({vol.Required("name"): str}), "Does things")
+    formatted = _format_tool(tool, llm.selector_serializer)
+    assert formatted["type"] == "function"
+    assert formatted["function"]["name"] == "test_tool"
+    assert formatted["function"]["description"] == "Does things"
+
+
+def test_description_omitted_when_missing() -> None:
+    tool = _Tool(vol.Schema({}), None)
+    assert "description" not in _format_tool(tool, None)["function"]
+
+
+def test_basic_types() -> None:
+    params = _params(
+        {
+            vol.Required("name"): str,
+            vol.Optional("count"): int,
+            vol.Optional("ratio"): float,
+            vol.Optional("enabled"): bool,
+        }
+    )
+    assert params["type"] == "object"
+    assert params["required"] == ["name"]
+    assert params["properties"]["name"] == {"type": "string"}
+    assert params["properties"]["count"] == {"type": "integer"}
+    assert params["properties"]["ratio"] == {"type": "number"}
+    assert params["properties"]["enabled"] == {"type": "boolean"}
+
+
+def test_select_selector_becomes_enum() -> None:
+    params = _params(
+        {vol.Optional("mode"): selector.SelectSelector({"options": ["a", "b"]})}
+    )
+    assert params["properties"]["mode"]["enum"] == ["a", "b"]
+
+
+def test_list_of_strings() -> None:
+    params = _params({vol.Optional("names"): [cv.string]})
+    assert params["properties"]["names"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }

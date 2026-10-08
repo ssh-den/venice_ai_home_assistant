@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Callable
 import datetime
 import json
 import logging
@@ -25,12 +26,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, TemplateError
-from homeassistant.helpers import device_registry as dr, intent, llm, selector
+from homeassistant.helpers import device_registry as dr, intent, llm
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
 from homeassistant.util.json import JsonObjectType
 import voluptuous as vol
+from voluptuous_openapi import convert
 
 from .client import RateLimitError, VeniceAIError
 from .const import (
@@ -45,7 +47,6 @@ from .const import (
     CONF_TOP_P,
     CONVERSATION_TTL_SECONDS,
     DOMAIN,
-    HAS_VOLUPTUOUS_OPENAPI,
     MAX_CHAT_HISTORY_SIZE,
     MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
@@ -57,11 +58,6 @@ from .const import (
     RECOMMENDED_TOP_P,
 )
 from .venice_api import ChatParameters, VeniceConversationService
-
-if HAS_VOLUPTUOUS_OPENAPI:
-    from voluptuous_openapi import (
-        convert as voluptuous_convert,
-    )
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,152 +95,17 @@ def _strip_thinking(text: str) -> str:
     return text.strip()
 
 
-def _convert_schema_to_hashable(obj: Any) -> Any:
-    """Recursively convert a voluptuous schema into a representation that
-    voluptuous_openapi can handle.
-
-    The main issue is that some HA tools have schemas with:
-    1. Required/Optional wrappers around Selector objects as keys (unhashable)
-    2. Selector objects as values (unhashable)
-
-    We convert all selector objects to str, and convert dict keys to strings
-    when they're wrapped selectors. We return a regular dict (not frozenset)
-    because voluptuous_openapi expects dict-like structures.
-    """
-    if isinstance(obj, dict):
-        result = {}
-        for k, v in obj.items():
-            # Keys may be Required/Optional wrappers around selectors, which
-            # aren't hashable. Convert such keys to their string representation.
-            hashable_k = k
-            if hasattr(k, "schema") and isinstance(k.schema, selector.Selector):
-                # Unwrap Required/Optional and use the inner selector's string repr
-                hashable_k = str(k.schema)
-            elif isinstance(k, selector.Selector):
-                hashable_k = str(k)
-            result[hashable_k] = _convert_schema_to_hashable(v)
-        return result
-    if isinstance(obj, list):
-        return [_convert_schema_to_hashable(v) for v in obj]
-    if isinstance(obj, selector.Selector):
-        _LOGGER.debug(
-            "_convert_schema_to_hashable: replacing selector %s with str",
-            obj.__class__.__name__,
-        )
-        return str
-    # Handle Required/Optional wrappers that contain selectors
-    if hasattr(obj, "schema") and isinstance(obj.schema, selector.Selector):
-        return str
-    return obj
-
-
-def _format_venice_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
-    """Convert a schema dict into a Venice-compatible OpenAPI-like schema.
-
-    Recursively traverses the schema, preserving nested dict/list structures
-    and selector metadata (e.g., SelectSelector options become JSON Schema
-    ``enum`` values) while mapping Python types to JSON Schema types.
-    """
-    schema: dict[str, Any] = {}
-    for key, val in raw_schema.items():
-        # Unwrap voluptuous Required/Optional wrappers
-        if hasattr(val, "schema"):
-            val = val.schema
-
-        if val is str or val is Any:
-            schema[key] = {"type": "string"}
-        elif val is int:
-            schema[key] = {"type": "integer"}
-        elif val is float:
-            schema[key] = {"type": "number"}
-        elif val is bool:
-            schema[key] = {"type": "boolean"}
-        elif isinstance(val, selector.SelectSelector):
-            config = getattr(val, "config", None)
-            options = getattr(config, "options", None) if config else None
-            if options:
-                schema[key] = {"type": "string", "enum": list(options)}
-                _LOGGER.debug(
-                    "_format_venice_schema: preserved SelectSelector with %d options for key %s",
-                    len(options),
-                    key,
-                )
-            else:
-                schema[key] = {"type": "string"}
-        elif isinstance(val, selector.Selector):
-            _LOGGER.debug(
-                "_format_venice_schema: converting selector %s to string for key %s",
-                val.__class__.__name__,
-                key,
-            )
-            schema[key] = {"type": "string"}
-        elif isinstance(val, dict):
-            schema[key] = {"type": "object", "properties": _format_venice_schema(val)}
-        elif isinstance(val, list):
-            schema[key] = {
-                "type": "array",
-                "items": _format_venice_schema({"__item__": val[0]}).get(
-                    "__item__", {}
-                ),
-            }
-        else:
-            _LOGGER.debug(
-                "_format_venice_schema: unsupported type %s for key %s, defaulting to string",
-                type(val).__name__,
-                key,
-            )
-            schema[key] = {"type": "string"}
-    return schema
-
-
-def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
-    """Convert tool parameters schema to Venice-compatible format."""
-    if not tool.parameters:
-        return None
-
-    if HAS_VOLUPTUOUS_OPENAPI:
-        try:
-            hashable = _convert_schema_to_hashable(tool.parameters)
-            parameters_schema = voluptuous_convert(hashable)
-            # voluptuous_openapi may return list for 'anyOf' patterns; simplify
-            if isinstance(parameters_schema, list):
-                parameters_schema = parameters_schema[0]
-            if (
-                isinstance(parameters_schema, dict)
-                and "properties" in parameters_schema
-            ):
-
-                def _ensure_types(sub_schema: dict[str, Any]) -> None:
-                    if "properties" in sub_schema:
-                        for _, prop in sub_schema["properties"].items():
-                            if isinstance(prop, dict):
-                                if "type" not in prop:
-                                    if "properties" in prop:
-                                        prop["type"] = "object"
-                                    elif "enum" in prop:
-                                        prop["type"] = "string"
-                                    else:
-                                        prop["type"] = "string"
-                                _ensure_types(prop)
-
-                _ensure_types(parameters_schema)
-                return parameters_schema
-            elif isinstance(parameters_schema, dict):
-                return {"type": "object", "properties": parameters_schema}
-            else:
-                _LOGGER.warning(
-                    "Unexpected schema type from voluptuous_openapi: %s",
-                    type(parameters_schema).__name__,
-                )
-                return {"type": "object", "properties": {}}
-        except Exception as e:
-            _LOGGER.error("Failed to convert schema: %s", e, exc_info=True)
-            return {"type": "object", "properties": {}}
-    else:
-        _LOGGER.debug(
-            "Cannot perform detailed schema conversion without voluptuous_openapi."
-        )
-        return {"type": "object", "properties": {}}
+def _format_tool(
+    tool: llm.Tool, custom_serializer: Callable[[Any], Any] | None
+) -> dict[str, Any]:
+    """Format a Home Assistant LLM tool as a Venice AI function tool."""
+    function: dict[str, Any] = {
+        "name": tool.name,
+        "parameters": convert(tool.parameters, custom_serializer=custom_serializer),
+    }
+    if tool.description:
+        function["description"] = tool.description
+    return {"type": "function", "function": function}
 
 
 def _convert_chat_log_to_venice_messages(
@@ -563,28 +424,10 @@ class VeniceAIConversationEntity(ConversationEntity):
                 len(chat_log.content) if chat_log.content else 0,
             )
 
-        # Convert tools to Venice format
-        venice_tools = []
-        for tool in tools:
-            tool_dict: dict[str, Any] = {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                },
-            }
-            parameters_schema = _convert_tool_parameters(tool)
-            if parameters_schema is None and tool.parameters:
-                _LOGGER.warning(
-                    "Could not format params for tool %s. Sending without params.",
-                    tool.name,
-                )
-            else:
-                tool_dict["function"]["parameters"] = parameters_schema or {
-                    "type": "object",
-                    "properties": {},
-                }
-            venice_tools.append(tool_dict)
+        custom_serializer = (
+            chat_log.llm_api.custom_serializer if chat_log.llm_api else None
+        )
+        venice_tools = [_format_tool(tool, custom_serializer) for tool in tools]
 
         # NumberSelector stores values as floats; cast to int so range() works.
         max_tool_iterations = int(
