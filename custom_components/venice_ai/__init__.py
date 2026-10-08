@@ -3,15 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 import logging
+from typing import Any
 import uuid
 
-import voluptuous as vol
-
-from dataclasses import dataclass, field
-from typing import Any
-
-
+from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import (
@@ -27,15 +24,20 @@ from homeassistant.exceptions import (
     HomeAssistantError,
     ServiceValidationError,
 )
-from homeassistant.helpers import config_validation as cv, issue_registry as ir, selector
-from homeassistant.helpers.issue_registry import IssueSeverity
+from homeassistant.helpers import (
+    config_validation as cv,
+    issue_registry as ir,
+    selector,
+)
 from homeassistant.helpers.httpx_client import get_async_client
+from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.typing import ConfigType
-from homeassistant.components import conversation
+import voluptuous as vol
 
 # Conditional import for ai_task (availability depends on HA version)
 try:
     from homeassistant.components import ai_task
+
     _HAS_AI_TASK = True
 except ImportError:
     _HAS_AI_TASK = False
@@ -48,13 +50,13 @@ from .client import (
 )
 from .const import (
     CONF_CHAT_MODEL,
-    CONF_TTS_MODEL,
     CONF_STT_MODEL,
+    CONF_TTS_MODEL,
     DOMAIN,
     HAS_VOLUPTUOUS_OPENAPI,
     RECOMMENDED_CHAT_MODEL,
-    RECOMMENDED_TTS_MODEL,
     RECOMMENDED_STT_MODEL,
+    RECOMMENDED_TTS_MODEL,
 )
 from .coordinator import VeniceAIDataUpdateCoordinator
 
@@ -99,7 +101,6 @@ class VeniceAIRuntimeData:
     # await this before touching ``ai_task_entity`` to avoid a race where the
     # service fires before the entity exists.
     ai_task_ready: asyncio.Event = field(default_factory=asyncio.Event)
-
 
 
 class VeniceAIConfigEntry(ConfigEntry):
@@ -163,6 +164,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     # Only register AI Task service if platform is available
     if _HAS_AI_TASK:
+
         async def generate_data(call: ServiceCall) -> ServiceResponse:
             """Generate data using Venice AI Task."""
             entry_id = call.data["config_entry"]
@@ -192,7 +194,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             if not ready.is_set():
                 try:
                     await asyncio.wait_for(ready.wait(), timeout=10.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     _LOGGER.warning(
                         "AI Task entity for entry %s was not ready within timeout",
                         entry.entry_id,
@@ -208,7 +210,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                     translation_placeholders={"entry_id": entry.entry_id},
                 )
 
-
             task_text = call.data["task"]
             structure = call.data.get("structure")
 
@@ -219,9 +220,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
             chat_log = conversation.ChatLog(
                 conversation_id=str(uuid.uuid4()),
-                content=[
-                    conversation.UserContent(content=task_text)
-                ]
+                content=[conversation.UserContent(content=task_text)],
             )
 
             try:
@@ -354,9 +353,7 @@ def _async_on_coordinator_update(
         )
 
 
-async def _async_create_model_issues(
-    hass: HomeAssistant, entry: ConfigEntry
-) -> None:
+async def _async_create_model_issues(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Check the Venice AI configuration and create repair issues as needed."""
     entry_id = entry.entry_id
     options = entry.options
@@ -399,9 +396,7 @@ async def _async_create_model_issues(
 
     for model_key, (current_model, available_set) in configured_models.items():
         if current_model in _DEPRECATED_MODELS:
-            issue_id = _ISSUE_DEPRECATED.format(
-                entry_id=entry_id, model_key=model_key
-            )
+            issue_id = _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=model_key)
             ir.async_create_issue(
                 hass,
                 DOMAIN,
@@ -423,9 +418,7 @@ async def _async_create_model_issues(
             continue
 
         if available_set and current_model not in available_set:
-            issue_id = _ISSUE_UNAVAIL.format(
-                entry_id=entry_id, model_key=model_key
-            )
+            issue_id = _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=model_key)
             ir.async_create_issue(
                 hass,
                 DOMAIN,

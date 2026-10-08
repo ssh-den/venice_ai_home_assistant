@@ -33,9 +33,7 @@ class VeniceAITaskEntity(AITaskEntity):
     ) -> list[dict[str, Any]]:
         """Generate tasks using Venice AI based on the provided prompt."""
         if not prompt:
-            prompt = (
-                "Generate a list of 5 useful daily tasks for smart home user."
-            )
+            prompt = "Generate a list of 5 useful daily tasks for smart home user."
 
         try:
             # Prepare the message for Venice AI
@@ -54,23 +52,21 @@ class VeniceAITaskEntity(AITaskEntity):
             ]
 
             # Call Venice AI API
-            response_data = await self._client.chat.create_non_streaming({
-                "model": "default",  # Use default model
-                "messages": messages,
-                "max_tokens": 1000,
-                "temperature": 0.7,
-                "stream": False,
-            })
+            response_data = await self._client.chat.create_non_streaming(
+                {
+                    "model": "default",  # Use default model
+                    "messages": messages,
+                    "max_tokens": 1000,
+                    "temperature": 0.7,
+                    "stream": False,
+                }
+            )
 
             if not response_data or not response_data.get("choices"):
                 LOGGER.error("Invalid Venice AI response: %s", response_data)
                 raise HomeAssistantError("Invalid Venice AI response")
 
-            content = (
-                response_data["choices"][0]
-                .get("message", {})
-                .get("content", "")
-            )
+            content = response_data["choices"][0].get("message", {}).get("content", "")
             if not content:
                 LOGGER.error("No content in Venice AI response")
                 raise HomeAssistantError("No content received from Venice AI")
@@ -87,10 +83,7 @@ class VeniceAITaskEntity(AITaskEntity):
             # Convert to VeniceTask objects and then to dicts
             tasks = []
             for i, task_data in enumerate(tasks_data):
-                if (
-                    not isinstance(task_data, dict)
-                    or "summary" not in task_data
-                ):
+                if not isinstance(task_data, dict) or "summary" not in task_data:
                     continue
                 task = VeniceTask(
                     uid=f"venice_task_{i}",
@@ -119,7 +112,7 @@ async def async_setup_entry(
     if not entry.runtime_data:
         LOGGER.error(
             "Venice AI client not available in runtime_data for entry %s",
-            entry.entry_id
+            entry.entry_id,
         )
         return
     entity = VeniceAITaskEntity(entry)

@@ -1,4 +1,5 @@
 """Diagnostics support for Venice AI."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -7,7 +8,6 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
-
 
 # Fields redacted in full by async_redact_data (tokens, passwords, etc.).
 # NOTE: "api_key" is intentionally excluded here — it is handled separately
@@ -61,7 +61,9 @@ async def async_get_config_entry_diagnostics(
         "version": entry.version,
         "options": async_redact_data(entry_options, TO_REDACT),
         "data": async_redact_data(entry_data, TO_REDACT),
-        "state": entry.state.value if hasattr(entry.state, "value") else str(entry.state),
+        "state": (
+            entry.state.value if hasattr(entry.state, "value") else str(entry.state)
+        ),
         "client_available": client is not None,
         "homeassistant_version": HA_VERSION,
     }
@@ -80,9 +82,12 @@ async def async_get_config_entry_diagnostics(
         diagnostics["coordinator"] = {
             "last_update_success": coordinator.last_update_success,
             "last_exception": last_exception,
-            "update_interval_seconds": coordinator.update_interval.total_seconds()
-            if hasattr(coordinator, "update_interval") and coordinator.update_interval
-            else None,
+            "update_interval_seconds": (
+                coordinator.update_interval.total_seconds()
+                if hasattr(coordinator, "update_interval")
+                and coordinator.update_interval
+                else None
+            ),
             "text_models_count": len(text_models),
             "audio_models_count": len(audio_models),
             "voices_count": len(voices),

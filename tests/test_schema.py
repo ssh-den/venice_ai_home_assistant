@@ -17,16 +17,14 @@ that ``tests/conftest.py`` sets up.
 from __future__ import annotations
 
 import ast
+from collections.abc import Callable
 import logging
 from pathlib import Path
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 import pytest
 
-
-_COMPONENT_DIR = (
-    Path(__file__).resolve().parents[1] / "custom_components" / "venice_ai"
-)
+_COMPONENT_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "venice_ai"
 
 
 class _StubSelector:
@@ -60,7 +58,8 @@ def _extract_helpers() -> dict[str, object]:
     source = (_COMPONENT_DIR / "conversation.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     selected: list[ast.FunctionDef] = [
-        node for node in tree.body
+        node
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name in target_names
     ]
     if {fn.name for fn in selected} != target_names:

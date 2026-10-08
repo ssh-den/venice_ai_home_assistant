@@ -3,69 +3,73 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 import datetime
 import json
 import logging
 import time
-from collections import OrderedDict
 from typing import Any
 
 from homeassistant.components.conversation import (
     HOME_ASSISTANT_AGENT,
     MATCH_ALL,
+    AssistantContent,
+    ChatLog,
     ConversationEntity,
     ConversationEntityFeature,
     ConversationInput,
     ConversationResult,
-    ChatLog,
-    UserContent,
-    AssistantContent,
     SystemContent,
     ToolResultContent,
+    UserContent,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_LLM_HASS_API
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, TemplateError
-from homeassistant.helpers import intent, llm, device_registry as dr, selector
+from homeassistant.helpers import device_registry as dr, intent, llm, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
 
 from .client import RateLimitError, VeniceAIError
-from .venice_api import ChatParameters, VeniceConversationService
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_DISABLE_THINKING,
     CONF_MAX_TOKENS,
     CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
+    CONF_STREAM_RESPONSE,
+    CONF_STRIP_THINKING_RESPONSE,
     CONF_TEMPERATURE,
     CONF_TOP_P,
-    CONF_STRIP_THINKING_RESPONSE,
-    CONF_DISABLE_THINKING,
-    RECOMMENDED_DISABLE_THINKING,
-    CONF_STREAM_RESPONSE,
-    RECOMMENDED_STREAM_RESPONSE,
     CONVERSATION_TTL_SECONDS,
     DOMAIN,
     HAS_VOLUPTUOUS_OPENAPI,
     MAX_CHAT_HISTORY_SIZE,
     MAX_CHAT_LOG_LENGTH,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_DISABLE_THINKING,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
+    RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
+from .venice_api import ChatParameters, VeniceConversationService
 
 if HAS_VOLUPTUOUS_OPENAPI:
-    from voluptuous_openapi import convert as voluptuous_convert  # type: ignore[import-untyped]
+    from voluptuous_openapi import (
+        convert as voluptuous_convert,  # type: ignore[import-untyped]
+    )
 
 _LOGGER = logging.getLogger(__name__)
 
 # Default system prompt for Venice AI - short personality string only.
 # HA's llm.DEFAULT_INSTRUCTIONS_PROMPT handles entity states, date/time, and tool instructions.
-DEFAULT_SYSTEM_PROMPT = "You are a helpful smart home assistant. Be concise and friendly."
+DEFAULT_SYSTEM_PROMPT = (
+    "You are a helpful smart home assistant. Be concise and friendly."
+)
 
 
 def _strip_thinking(text: str) -> str:
@@ -86,7 +90,7 @@ def _strip_thinking(text: str) -> str:
             # unmatched open tag - strip to end to be safe
             text = text[:start].strip()
             break
-        text = text[:start] + text[end + 8:]
+        text = text[:start] + text[end + 8 :]
     # Venice-style ' thinking' ... ' end of thinking'
     if " thinking" in text:
         parts = text.split(" end of thinking")
@@ -98,11 +102,11 @@ def _strip_thinking(text: str) -> str:
 def _convert_schema_to_hashable(obj: Any) -> Any:
     """Recursively convert a voluptuous schema into a representation that
     voluptuous_openapi can handle.
-    
+
     The main issue is that some HA tools have schemas with:
     1. Required/Optional wrappers around Selector objects as keys (unhashable)
     2. Selector objects as values (unhashable)
-    
+
     We convert all selector objects to str, and convert dict keys to strings
     when they're wrapped selectors. We return a regular dict (not frozenset)
     because voluptuous_openapi expects dict-like structures.
@@ -179,7 +183,9 @@ def _format_venice_schema(raw_schema: dict[str, Any]) -> dict[str, Any]:
         elif isinstance(val, list):
             schema[key] = {
                 "type": "array",
-                "items": _format_venice_schema({"__item__": val[0]}).get("__item__", {}),
+                "items": _format_venice_schema({"__item__": val[0]}).get(
+                    "__item__", {}
+                ),
             }
         else:
             _LOGGER.debug(
@@ -203,7 +209,11 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
             # voluptuous_openapi may return list for 'anyOf' patterns; simplify
             if isinstance(parameters_schema, list):
                 parameters_schema = parameters_schema[0]
-            if isinstance(parameters_schema, dict) and "properties" in parameters_schema:
+            if (
+                isinstance(parameters_schema, dict)
+                and "properties" in parameters_schema
+            ):
+
                 def _ensure_types(sub_schema: dict[str, Any]) -> None:
                     if "properties" in sub_schema:
                         for _, prop in sub_schema["properties"].items():
@@ -231,7 +241,9 @@ def _convert_tool_parameters(tool: llm.Tool) -> dict[str, Any] | None:
             _LOGGER.error("Failed to convert schema: %s", e, exc_info=True)
             return {"type": "object", "properties": {}}
     else:
-        _LOGGER.debug("Cannot perform detailed schema conversion without voluptuous_openapi.")
+        _LOGGER.debug(
+            "Cannot perform detailed schema conversion without voluptuous_openapi."
+        )
         return {"type": "object", "properties": {}}
 
 
@@ -265,15 +277,19 @@ def _convert_chat_log_to_venice_messages(
                 assistant_msg["tool_calls"] = tool_calls
             messages.append(assistant_msg)
         elif isinstance(msg, ToolResultContent):
-            messages.append({
-                "role": "tool",
-                "tool_call_id": msg.tool_call_id,
-                "content": json.dumps(msg.tool_result),
-            })
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": msg.tool_call_id,
+                    "content": json.dumps(msg.tool_result),
+                }
+            )
         elif isinstance(msg, SystemContent):
             messages.append({"role": "system", "content": msg.content})
         else:
-            _LOGGER.warning("Unsupported message type for Venice conversion: %s", type(msg))
+            _LOGGER.warning(
+                "Unsupported message type for Venice conversion: %s", type(msg)
+            )
 
     return messages
 
@@ -289,11 +305,9 @@ def _trim_chat_log(chat_log: ChatLog) -> None:
         return
 
     keep_first = [content[0]]
-    tail = content[-(MAX_CHAT_LOG_LENGTH - 1):]
+    tail = content[-(MAX_CHAT_LOG_LENGTH - 1) :]
     trimmed = keep_first + tail
-    _LOGGER.debug(
-        "Trimmed chat log from %d to %d messages", len(content), len(trimmed)
-    )
+    _LOGGER.debug("Trimmed chat log from %d to %d messages", len(content), len(trimmed))
     chat_log.content.clear()
     chat_log.content.extend(trimmed)
 
@@ -371,7 +385,7 @@ class VeniceAIConversationEntity(ConversationEntity):
             except asyncio.CancelledError:
                 # Normal shutdown path
                 raise
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Error during periodic conversation cleanup")
 
     def _cleanup_old_conversations(self, now: float) -> None:
@@ -429,7 +443,11 @@ class VeniceAIConversationEntity(ConversationEntity):
             # HIGH-2: record access time so the periodic cleanup loop can
             # distinguish active vs idle conversations.
             self._last_access[cid] = time.monotonic()
-            _LOGGER.debug("Resuming existing conversation %s (%d messages)", cid, len(self._chat_logs[cid].content))
+            _LOGGER.debug(
+                "Resuming existing conversation %s (%d messages)",
+                cid,
+                len(self._chat_logs[cid].content),
+            )
             return self._chat_logs[cid]
 
         # New conversation
@@ -456,7 +474,17 @@ class VeniceAIConversationEntity(ConversationEntity):
     @property
     def supported_options(self) -> list[str]:
         """Return list of supported options."""
-        return [CONF_PROMPT, CONF_CHAT_MODEL, CONF_MAX_TOKENS, CONF_TEMPERATURE, CONF_TOP_P, CONF_MAX_TOOL_ITERATIONS, CONF_STRIP_THINKING_RESPONSE, CONF_DISABLE_THINKING, CONF_STREAM_RESPONSE]
+        return [
+            CONF_PROMPT,
+            CONF_CHAT_MODEL,
+            CONF_MAX_TOKENS,
+            CONF_TEMPERATURE,
+            CONF_TOP_P,
+            CONF_MAX_TOOL_ITERATIONS,
+            CONF_STRIP_THINKING_RESPONSE,
+            CONF_DISABLE_THINKING,
+            CONF_STREAM_RESPONSE,
+        ]
 
     async def _async_handle_message(
         self,
@@ -492,7 +520,9 @@ class VeniceAIConversationEntity(ConversationEntity):
             )
         except Exception as err:
             _LOGGER.error("Error providing LLM data to chat log: %s", err)
-            raise HomeAssistantError(f"Error setting up conversation context: {err}") from err
+            raise HomeAssistantError(
+                f"Error setting up conversation context: {err}"
+            ) from err
 
         # Get tools from the chat_log (HA populates this in async_provide_llm_data)
         tools: list[llm.Tool] = list(chat_log.llm_api.tools) if chat_log.llm_api else []
@@ -511,8 +541,14 @@ class VeniceAIConversationEntity(ConversationEntity):
                 system_prompt[:2000],
             )
             # Check for common entity state indicators
-            if "sensor" in system_prompt.lower() or "climate" in system_prompt.lower() or "state" in system_prompt.lower():
-                _LOGGER.debug("System prompt appears to contain entity state information")
+            if (
+                "sensor" in system_prompt.lower()
+                or "climate" in system_prompt.lower()
+                or "state" in system_prompt.lower()
+            ):
+                _LOGGER.debug(
+                    "System prompt appears to contain entity state information"
+                )
             else:
                 _LOGGER.warning(
                     "System prompt does NOT appear to contain entity states. "
@@ -538,14 +574,20 @@ class VeniceAIConversationEntity(ConversationEntity):
             parameters_schema = _convert_tool_parameters(tool)
             if parameters_schema is None and tool.parameters:
                 _LOGGER.warning(
-                    "Could not format params for tool %s. Sending without params.", tool.name
+                    "Could not format params for tool %s. Sending without params.",
+                    tool.name,
                 )
             else:
-                tool_dict["function"]["parameters"] = parameters_schema or {"type": "object", "properties": {}}
+                tool_dict["function"]["parameters"] = parameters_schema or {
+                    "type": "object",
+                    "properties": {},
+                }
             venice_tools.append(tool_dict)
 
         # NumberSelector stores values as floats; cast to int so range() works.
-        max_tool_iterations = int(options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS))
+        max_tool_iterations = int(
+            options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
+        )
 
         _LOGGER.debug(
             "Conversation turn starting: llm_api=%r, tools_available=%d, model=%s, "
@@ -593,9 +635,13 @@ class VeniceAIConversationEntity(ConversationEntity):
 
                 if not messages:
                     _LOGGER.error("Message list is empty before sending to API.")
-                    raise HomeAssistantError("Message list is empty before sending to API.")
+                    raise HomeAssistantError(
+                        "Message list is empty before sending to API."
+                    )
 
-                disable_thinking = options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
+                disable_thinking = options.get(
+                    CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING
+                )
                 venice_params: dict[str, Any] | None = None
                 if disable_thinking:
                     venice_params = {"disable_thinking": True}
@@ -621,7 +667,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                 if iteration == 0:
                     _call_label = "Initial API call"
                 else:
-                    _call_label = f"API call after tool results (iteration {iteration + 1})"
+                    _call_label = (
+                        f"API call after tool results (iteration {iteration + 1})"
+                    )
                 _LOGGER.debug(
                     "[PERF] [+%.3fs] %s -> Venice AI: messages=%d, tools=%d, stream=%s",
                     _elapsed_so_far,
@@ -674,9 +722,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                         prompt_tokens,
                         completion_tokens,
                         total_tokens,
-                        f", first_token=+{stream_result.time_to_first_token:.3f}s"
-                        if stream_result and stream_result.time_to_first_token is not None
-                        else "",
+                        (
+                            f", first_token=+{stream_result.time_to_first_token:.3f}s"
+                            if stream_result
+                            and stream_result.time_to_first_token is not None
+                            else ""
+                        ),
                     )
                 else:
                     _LOGGER.debug(
@@ -684,9 +735,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                         _elapsed_after,
                         _call_label,
                         _iter_elapsed,
-                        f", first_token=+{stream_result.time_to_first_token:.3f}s"
-                        if stream_result and stream_result.time_to_first_token is not None
-                        else "",
+                        (
+                            f", first_token=+{stream_result.time_to_first_token:.3f}s"
+                            if stream_result
+                            and stream_result.time_to_first_token is not None
+                            else ""
+                        ),
                     )
 
                 choice = response_data["choices"][0]
@@ -819,10 +873,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                 # Store assistant message with tool call metadata encoded so
                 # _convert_chat_log_to_venice_messages can reconstruct the
                 # full assistant+tool_calls payload the API expects.
-                encoded_content = json.dumps({
-                    "text": text_content,
-                    "tool_calls": tool_calls,
-                })
+                encoded_content = json.dumps(
+                    {
+                        "text": text_content,
+                        "tool_calls": tool_calls,
+                    }
+                )
                 assistant_content = AssistantContent(
                     agent_id=DOMAIN,
                     content=encoded_content,
@@ -844,7 +900,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                     tool_args_str = func_details.get("arguments", "{}")
 
                     if not call_id or call_type != "function" or not func_details:
-                        _LOGGER.warning("Skipping malformed tool call: %s", tool_call_data)
+                        _LOGGER.warning(
+                            "Skipping malformed tool call: %s", tool_call_data
+                        )
                         continue
                     if not tool_name:
                         _LOGGER.warning("Tool call missing name: %s", tool_call_data)
@@ -861,7 +919,9 @@ class VeniceAIConversationEntity(ConversationEntity):
                         tool_args = json.loads(tool_args_str)
                     except json.JSONDecodeError:
                         _LOGGER.error(
-                            "Failed JSON parse for tool %s args: %s", tool_name, tool_args_str
+                            "Failed JSON parse for tool %s args: %s",
+                            tool_name,
+                            tool_args_str,
                         )
                         continue
 
@@ -923,6 +983,7 @@ class VeniceAIConversationEntity(ConversationEntity):
                                 # like llm_context. Inspect the signature to determine
                                 # what parameters are needed.
                                 import inspect
+
                                 sig = inspect.signature(tool.async_call)
                                 params = list(sig.parameters.keys())
                                 _LOGGER.debug(
@@ -933,8 +994,12 @@ class VeniceAIConversationEntity(ConversationEntity):
                                 # Build call args based on signature
                                 call_kwargs = {}
                                 if "llm_context" in params:
-                                    call_kwargs["llm_context"] = user_input.as_llm_context(DOMAIN)
-                                tool_result = await tool.async_call(self.hass, tool_input, **call_kwargs)
+                                    call_kwargs["llm_context"] = (
+                                        user_input.as_llm_context(DOMAIN)
+                                    )
+                                tool_result = await tool.async_call(
+                                    self.hass, tool_input, **call_kwargs
+                                )
                                 _LOGGER.debug(
                                     "[PERF] [+%.3fs] HA tool %s returned in %.3fs: %s",
                                     time.monotonic() - _turn_start,
@@ -943,12 +1008,16 @@ class VeniceAIConversationEntity(ConversationEntity):
                                     tool_result,
                                 )
                             except Exception as tool_err:
-                                _LOGGER.warning("Tool %s failed: %s", tool_name, tool_err)
+                                _LOGGER.warning(
+                                    "Tool %s failed: %s", tool_name, tool_err
+                                )
                                 tool_result = {"error": str(tool_err)}
                             break
 
                     if tool_result is None:
-                        _LOGGER.warning("Tool %s not found in HA Assist API tools list", tool_name)
+                        _LOGGER.warning(
+                            "Tool %s not found in HA Assist API tools list", tool_name
+                        )
                         tool_result = {
                             "error": (
                                 f"Tool '{tool_name}' is not available. "
@@ -1049,7 +1118,11 @@ class VeniceAIConversationEntity(ConversationEntity):
             chat_log.conversation_id,
             len(chat_log.content),
             len(assistant_response_content),
-            assistant_response_content[:200] if assistant_response_content else "<empty>",
+            (
+                assistant_response_content[:200]
+                if assistant_response_content
+                else "<empty>"
+            ),
         )
 
         return ConversationResult(

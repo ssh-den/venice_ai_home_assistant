@@ -7,11 +7,11 @@ TEST-2 goal of integration-style tests with a mocked Venice AI client.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import importlib.util
+from pathlib import Path
 import sys
 import types
-from contextlib import asynccontextmanager
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -60,7 +60,6 @@ def load_component_module(name: str) -> types.ModuleType:
     return module
 
 
-
 class FakeChunk:
     """Minimal stand-in for ``ChatCompletionChunk`` used by the service layer."""
 
@@ -79,7 +78,7 @@ class FakeStream:
     def __init__(self, chunks: list[FakeChunk]) -> None:
         self._chunks = chunks
 
-    def __aiter__(self) -> "FakeStream":
+    def __aiter__(self) -> FakeStream:
         self._iter = iter(self._chunks)
         return self
 

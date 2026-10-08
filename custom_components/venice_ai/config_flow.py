@@ -6,14 +6,13 @@ import logging
 from types import MappingProxyType
 from typing import Any
 
-import voluptuous as vol
-
 from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
 )
+import voluptuous as vol
 
 # OptionsFlowWithReload was introduced in HA 2024.1 and automatically reloads
 # the integration when options are saved, removing the need for a manual
@@ -22,7 +21,7 @@ from homeassistant.config_entries import (
 # so the try-branch will always win in practice).
 try:
     from homeassistant.config_entries import OptionsFlowWithReload as _OptionsFlowBase
-except ImportError:  # pragma: no cover – only hit on very old HA cores
+except ImportError:  # pragma: no cover - only hit on very old HA cores
     _OptionsFlowBase = OptionsFlow  # type: ignore[assignment, misc]
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.helpers import config_validation as cv, llm
@@ -37,42 +36,43 @@ from homeassistant.helpers.selector import (
     SelectSelectorMode,
     TemplateSelector,
 )
+
 from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_DISABLE_THINKING,
     CONF_MAX_TOKENS,
     CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
-    CONF_TEMPERATURE,
-    CONF_TOP_P,
-    CONF_STRIP_THINKING_RESPONSE,
-    RECOMMENDED_STRIP_THINKING_RESPONSE,
-    CONF_DISABLE_THINKING,
-    RECOMMENDED_DISABLE_THINKING,
+    CONF_REQUEST_TIMEOUT,
     CONF_STREAM_RESPONSE,
-    RECOMMENDED_STREAM_RESPONSE,
-    CONF_TTS_MODEL,
-    CONF_TTS_VOICE,
-    CONF_TTS_RESPONSE_FORMAT,
-    CONF_TTS_SPEED,
+    CONF_STRIP_THINKING_RESPONSE,
     CONF_STT_MODEL,
     CONF_STT_RESPONSE_FORMAT,
     CONF_STT_TIMESTAMPS,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
+    CONF_TTS_MODEL,
+    CONF_TTS_RESPONSE_FORMAT,
+    CONF_TTS_SPEED,
+    CONF_TTS_VOICE,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_DISABLE_THINKING,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
-    RECOMMENDED_TEMPERATURE,
-    RECOMMENDED_TOP_P,
-    RECOMMENDED_TTS_MODEL,
-    RECOMMENDED_TTS_VOICE,
-    RECOMMENDED_TTS_RESPONSE_FORMAT,
-    RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_REQUEST_TIMEOUT,
+    RECOMMENDED_STREAM_RESPONSE,
+    RECOMMENDED_STRIP_THINKING_RESPONSE,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
-    CONF_REQUEST_TIMEOUT,
-    RECOMMENDED_REQUEST_TIMEOUT,
+    RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_TOP_P,
+    RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_RESPONSE_FORMAT,
+    RECOMMENDED_TTS_SPEED,
+    RECOMMENDED_TTS_VOICE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,7 +81,9 @@ _LOGGER = logging.getLogger(__name__)
 try:
     from .conversation import DEFAULT_SYSTEM_PROMPT
 except ImportError:
-    _LOGGER.warning("Could not import DEFAULT_SYSTEM_PROMPT from conversation.py, using fallback.")
+    _LOGGER.warning(
+        "Could not import DEFAULT_SYSTEM_PROMPT from conversation.py, using fallback."
+    )
     DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
 
 # ---------------------------------------------------------------------------
@@ -131,12 +133,17 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _LOGGER.debug("Validating Venice AI API key by fetching models")
-                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                async with AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY]
+                ) as client:
                     models_response = await client.models.list()
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
 
-                _LOGGER.debug("API key validation successful, found %d models", len(models_response))
+                _LOGGER.debug(
+                    "API key validation successful, found %d models",
+                    len(models_response),
+                )
 
             except AuthenticationError:
                 errors["base"] = "invalid_auth"
@@ -145,7 +152,9 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
                 _LOGGER.error("Cannot connect to Venice AI: %s", err)
             except Exception:
-                _LOGGER.exception("Unexpected exception during Venice AI setup validation")
+                _LOGGER.exception(
+                    "Unexpected exception during Venice AI setup validation"
+                )
                 errors["base"] = "unknown"
             else:
                 return self.async_create_entry(
@@ -175,7 +184,9 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             try:
                 _LOGGER.debug("Validating new Venice AI API key for re-auth")
-                async with AsyncVeniceAIClient(api_key=user_input[CONF_API_KEY]) as client:
+                async with AsyncVeniceAIClient(
+                    api_key=user_input[CONF_API_KEY]
+                ) as client:
                     models_response = await client.models.list()
                     if not isinstance(models_response, list):
                         raise VeniceAIError("Invalid models response")
@@ -188,7 +199,9 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
                 _LOGGER.error("Cannot connect to Venice AI during re-auth: %s", err)
             except Exception:
-                _LOGGER.exception("Unexpected exception during Venice AI re-auth validation")
+                _LOGGER.exception(
+                    "Unexpected exception during Venice AI re-auth validation"
+                )
                 errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(
@@ -219,10 +232,13 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
 # TTS model metadata helpers
 # ---------------------------------------------------------------------------
 
+
 class _TTSModelInfo:
     """Lightweight container for a TTS model and its voices."""
 
-    def __init__(self, model_id: str, voices: list[str], default_voice: str | None) -> None:
+    def __init__(
+        self, model_id: str, voices: list[str], default_voice: str | None
+    ) -> None:
         self.model_id = model_id
         self.voices = voices
         self.default_voice = default_voice
@@ -336,7 +352,7 @@ def _resolve_combined_tts_value(
             return f"{saved_model}{_TTS_MV_SEP}{saved_voice}"
 
     # 3. Fallback: first voice of recommended (or first available) model
-    for candidate in [RECOMMENDED_TTS_MODEL] + sorted(tts_info):
+    for candidate in [RECOMMENDED_TTS_MODEL, *sorted(tts_info)]:
         info = tts_info.get(candidate)
         if info and info.voices:
             voice = info.default_voice if info.default_voice else info.voices[0]
@@ -348,6 +364,7 @@ def _resolve_combined_tts_value(
 # ---------------------------------------------------------------------------
 # Options flow
 # ---------------------------------------------------------------------------
+
 
 class VeniceAIOptionsFlow(_OptionsFlowBase):
     """Options flow for Venice AI.
@@ -415,7 +432,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 text_resp = await client.models.list(model_type="text")
                 if isinstance(text_resp, list):
                     chat_options = [
-                        SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                        SelectOptionDict(
+                            label=m.get("id", "Unknown"), value=m.get("id", "")
+                        )
                         for m in text_resp
                         if isinstance(m, dict) and m.get("id")
                     ]
@@ -447,7 +466,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 asr_resp = await client.models.list(model_type="asr")
                 if isinstance(asr_resp, list):
                     stt_options = [
-                        SelectOptionDict(label=m.get("id", "Unknown"), value=m.get("id", ""))
+                        SelectOptionDict(
+                            label=m.get("id", "Unknown"), value=m.get("id", "")
+                        )
                         for m in asr_resp
                         if isinstance(m, dict) and m.get("id")
                     ]
@@ -463,7 +484,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         # Fallback to defaults when nothing was fetched.
         if not chat_options:
             chat_options = [
-                SelectOptionDict(label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL)
+                SelectOptionDict(
+                    label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL
+                )
             ]
         if not tts_info:
             tts_info = {
@@ -475,7 +498,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             }
         if not stt_options:
             stt_options = [
-                SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)
+                SelectOptionDict(
+                    label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL
+                )
             ]
 
         return chat_options, tts_info, stt_options, errors
@@ -492,13 +517,15 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         # not needed — an empty selection disables control.
         api_options: list[SelectOptionDict] = []
 
-        # Method 1: async_get_apis (HA ≥ 2024.x – returns API objects with .id/.name)
+        # Method 1: async_get_apis (HA ≥ 2024.x - returns API objects with .id/.name)
         if hasattr(llm, "async_get_apis"):
             try:
                 apis = list(llm.async_get_apis(self.hass))
                 for api in apis:
                     api_options.append(
-                        SelectOptionDict(label=getattr(api, "name", api.id), value=api.id)
+                        SelectOptionDict(
+                            label=getattr(api, "name", api.id), value=api.id
+                        )
                     )
                 _LOGGER.debug("Found %d LLM API(s) via async_get_apis", len(apis))
                 # Only return if we actually discovered something; otherwise fall through.
@@ -518,7 +545,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                             existing_values = {o["value"] for o in api_options}
                             if api_id not in existing_values:
                                 api_options.append(
-                                    SelectOptionDict(label=api_id.capitalize(), value=api_id)
+                                    SelectOptionDict(
+                                        label=api_id.capitalize(), value=api_id
+                                    )
                                 )
                     _LOGGER.debug(
                         "Found %d LLM API(s) via async_get_api_list", len(api_ids)
@@ -692,7 +721,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                             SelectOptionDict(label="JSON", value="json"),
                             SelectOptionDict(label="Text", value="text"),
                             SelectOptionDict(label="SRT", value="srt"),
-                            SelectOptionDict(label="Verbose JSON", value="verbose_json"),
+                            SelectOptionDict(
+                                label="Verbose JSON", value="verbose_json"
+                            ),
                             SelectOptionDict(label="VTT", value="vtt"),
                         ],
                         mode=SelectSelectorMode.DROPDOWN,
@@ -719,7 +750,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         errors: dict[str, str] = {}
 
         # Always fetch live so newly added models/voices are immediately visible.
-        chat_options, tts_info, stt_options, fetch_errors = await self._fetch_model_metadata()
+        chat_options, tts_info, stt_options, fetch_errors = (
+            await self._fetch_model_metadata()
+        )
         llm_api_options = await self._fetch_llm_api_options()
         combined_tts_options = _build_combined_tts_options(tts_info)
 
@@ -730,8 +763,13 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
             try:
                 # --- Normalise LLM API field ---
                 # If empty string (None selected), remove the key entirely
-                if CONF_LLM_HASS_API in user_input and not user_input[CONF_LLM_HASS_API]:
-                    user_input = {k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API}
+                if (
+                    CONF_LLM_HASS_API in user_input
+                    and not user_input[CONF_LLM_HASS_API]
+                ):
+                    user_input = {
+                        k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API
+                    }
                 # Note: We trust the dropdown selection since we validated available
                 # APIs when building the options list. No need to re-validate here.
 

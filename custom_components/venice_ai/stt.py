@@ -1,12 +1,13 @@
 """Speech-to-Text provider for Venice AI."""
+
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterable
 import datetime
 import logging
 import struct
 import time
-from collections.abc import AsyncIterable
 
 from homeassistant.components import stt
 from homeassistant.components.stt import (
@@ -17,6 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .client import AsyncVeniceAIClient, VeniceAIError
 from .const import (
     CONF_STT_MODEL,
     CONF_STT_RESPONSE_FORMAT,
@@ -27,7 +29,6 @@ from .const import (
     RECOMMENDED_STT_RESPONSE_FORMAT,
     RECOMMENDED_STT_TIMESTAMPS,
 )
-from .client import AsyncVeniceAIClient, VeniceAIError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +43,12 @@ _STT_VALIDATION_ATTRS = [
 ]
 
 
-def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1, bits_per_sample: int = 16) -> bytes:
+def _pcm_to_wav(
+    pcm_data: bytes,
+    sample_rate: int = 16000,
+    num_channels: int = 1,
+    bits_per_sample: int = 16,
+) -> bytes:
     """Convert raw PCM data to WAV format."""
     # Calculate sizes
     subchunk2_size = len(pcm_data)
@@ -52,11 +58,11 @@ def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1
 
     # WAV header (44 bytes)
     wav_header = struct.pack(
-        '<4sL4s4sLHHLLHH4sL',
-        b'RIFF',  # ChunkID
+        "<4sL4s4sLHHLLHH4sL",
+        b"RIFF",  # ChunkID
         chunk_size,  # ChunkSize
-        b'WAVE',  # Format
-        b'fmt ',  # Subchunk1ID
+        b"WAVE",  # Format
+        b"fmt ",  # Subchunk1ID
         16,  # Subchunk1Size (PCM)
         1,  # AudioFormat (PCM)
         num_channels,  # NumChannels
@@ -64,7 +70,7 @@ def _pcm_to_wav(pcm_data: bytes, sample_rate: int = 16000, num_channels: int = 1
         byte_rate,  # ByteRate
         block_align,  # BlockAlign
         bits_per_sample,  # BitsPerSample
-        b'data',  # Subchunk2ID
+        b"data",  # Subchunk2ID
         subchunk2_size,  # Subchunk2Size
     )
 
@@ -148,7 +154,9 @@ class VeniceAISTT(SpeechToTextEntity):
             if getattr(metadata, attr) not in supported:
                 _LOGGER.error(
                     "Unsupported %s: %s. Only %s is supported.",
-                    label, getattr(metadata, attr), supported,
+                    label,
+                    getattr(metadata, attr),
+                    supported,
                 )
                 return stt.SpeechResult("", stt.SpeechResultState.ERROR)
 
@@ -201,7 +209,9 @@ class VeniceAISTT(SpeechToTextEntity):
             )
 
             # Convert PCM data to WAV format since Venice AI expects proper WAV files
-            wav_data = _pcm_to_wav(bytes(audio_data), sample_rate=16000, num_channels=1, bits_per_sample=16)
+            wav_data = _pcm_to_wav(
+                bytes(audio_data), sample_rate=16000, num_channels=1, bits_per_sample=16
+            )
             _LOGGER.debug(
                 "[PERF-STT] [+%.3fs] PCM→WAV conversion done (%d → %d bytes)",
                 time.monotonic() - _stt_start,

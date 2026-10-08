@@ -1,0 +1,78 @@
+[project]
+name = "venice-ai-home-assistant"
+version = "1.0.0"
+requires-python = ">=3.13"
+
+[dependency-groups]
+dev = [
+    "pytest-homeassistant-custom-component",
+    "voluptuous-openapi>=0.0.4",
+    "black",
+    "mypy",
+    "pylint",
+    "pyright",
+    "ruff",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "ASYNC", "RUF"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["custom_components"]
+combine-as-imports = true
+
+[tool.mypy]
+python_version = "3.13"
+files = ["custom_components/venice_ai", "tests"]
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = ["voluptuous_openapi.*"]
+ignore_missing_imports = true
+
+[tool.pyright]
+include = ["custom_components", "tests"]
+venvPath = "."
+venv = ".venv"
+pythonVersion = "3.13"
+typeCheckingMode = "standard"
+
+[tool.pylint.main]
+py-version = "3.13"
+ignore-paths = ["^\\.venv/.*$"]
+
+[tool.pylint.format]
+max-line-length = 88
+
+[tool.pylint."messages control"]
+disable = [
+    "too-many-arguments",
+    "too-many-positional-arguments",
+    "too-many-instance-attributes",
+    "too-many-locals",
+    "too-many-branches",
+    "too-many-statements",
+    "too-many-return-statements",
+    "too-many-lines",
+    "too-many-nested-blocks",
+    "too-few-public-methods",
+    "duplicate-code",
+    "fixme",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

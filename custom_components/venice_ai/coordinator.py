@@ -70,7 +70,9 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             _LOGGER.warning("Rate limit exceeded fetching text models: %s", err)
             raise UpdateFailed(f"Rate limit exceeded: {err}") from err
         except ServiceUnavailableError as err:
-            _LOGGER.warning("Venice AI service unavailable fetching text models: %s", err)
+            _LOGGER.warning(
+                "Venice AI service unavailable fetching text models: %s", err
+            )
         except NetworkError as err:
             _LOGGER.warning("Network error fetching text models: %s", err)
         except VeniceAIError as err:
@@ -96,13 +98,17 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
                     if isinstance(raw_spec, dict):
                         spec_voices = raw_spec.get("voices")
                         if isinstance(spec_voices, list):
-                            voices_found = [v for v in spec_voices if isinstance(v, str) and v]
+                            voices_found = [
+                                v for v in spec_voices if isinstance(v, str) and v
+                            ]
 
                     # Fallback: legacy voice_models field
                     if not voices_found:
                         voice_models = model.get("voice_models", [])
                         if isinstance(voice_models, list):
-                            voices_found = [v for v in voice_models if isinstance(v, str) and v]
+                            voices_found = [
+                                v for v in voice_models if isinstance(v, str) and v
+                            ]
 
                     for vid in voices_found:
                         if vid not in data["voices"]:
@@ -114,7 +120,9 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             _LOGGER.warning("Rate limit exceeded fetching TTS models: %s", err)
             raise UpdateFailed(f"Rate limit exceeded: {err}") from err
         except ServiceUnavailableError as err:
-            _LOGGER.warning("Venice AI service unavailable fetching TTS models: %s", err)
+            _LOGGER.warning(
+                "Venice AI service unavailable fetching TTS models: %s", err
+            )
         except NetworkError as err:
             _LOGGER.warning("Network error fetching TTS models: %s", err)
         except VeniceAIError as err:
@@ -136,7 +144,9 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
             _LOGGER.warning("Rate limit exceeded fetching ASR models: %s", err)
             raise UpdateFailed(f"Rate limit exceeded: {err}") from err
         except ServiceUnavailableError as err:
-            _LOGGER.warning("Venice AI service unavailable fetching ASR models: %s", err)
+            _LOGGER.warning(
+                "Venice AI service unavailable fetching ASR models: %s", err
+            )
         except NetworkError as err:
             _LOGGER.warning("Network error fetching ASR models: %s", err)
         except VeniceAIError as err:

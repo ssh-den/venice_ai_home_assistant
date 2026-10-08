@@ -14,7 +14,6 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import VeniceAIError
-from .venice_api import ChatParameters, VeniceConversationService
 from .const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
@@ -24,11 +23,13 @@ from .const import (
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
 )
+from .venice_api import ChatParameters, VeniceConversationService
 
 _LOGGER = logging.getLogger(__name__)
 
 try:
     from homeassistant.components import ai_task
+
     _HAS_AI_TASK = True
 except ImportError:
     ai_task = None  # type: ignore[assignment]
@@ -119,7 +120,6 @@ else:
                     self.entry.entry_id,
                 )
 
-
         async def async_generate_data(
             self,
             task: ai_task.GenDataTask,
@@ -164,7 +164,9 @@ else:
 
             # Use configured options from config entry instead of hardcoded values
             max_tokens = self.entry.options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
-            temperature = self.entry.options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE)
+            temperature = self.entry.options.get(
+                CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
+            )
 
             try:
                 # Fix 6: use the service layer instead of calling the client directly.
@@ -178,11 +180,7 @@ else:
                 if not response_data or not response_data.get("choices"):
                     raise HomeAssistantError("Invalid Venice AI response")
 
-                text = (
-                    response_data["choices"][0]
-                    .get("message", {})
-                    .get("content", "")
-                )
+                text = response_data["choices"][0].get("message", {}).get("content", "")
 
                 if not task.structure:
                     return ai_task.GenDataTaskResult(

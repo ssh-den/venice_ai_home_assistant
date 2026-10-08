@@ -19,8 +19,8 @@ interchangeably.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
+import logging
 from typing import Any
 
 from .client import AsyncVeniceAIClient
@@ -67,7 +67,7 @@ class ToolCall:
     args_dict: dict[str, Any] | None = None
 
     @classmethod
-    def from_raw(cls, raw: dict[str, Any]) -> "ToolCall | None":
+    def from_raw(cls, raw: dict[str, Any]) -> ToolCall | None:
         """Return a :class:`ToolCall` from a raw tool-call dict, or None on garbage input.
 
         Performs minimal validation: ``id`` and function ``name`` must be
@@ -122,8 +122,12 @@ class StreamingChatResult:
     content: str = ""
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     finish_reason: str = "unknown"
-    time_to_first_token: float | None = None  # seconds from stream open to first content delta
-    usage: dict[str, Any] = field(default_factory=dict)  # token usage from final stream chunk
+    time_to_first_token: float | None = (
+        None  # seconds from stream open to first content delta
+    )
+    usage: dict[str, Any] = field(
+        default_factory=dict
+    )  # token usage from final stream chunk
 
     def as_message(self) -> dict[str, Any]:
         """Return an assistant ``message`` dict like the non-streaming API."""
@@ -135,10 +139,12 @@ class StreamingChatResult:
     def as_response(self) -> dict[str, Any]:
         """Return a response envelope shaped like the non-streaming API."""
         resp: dict[str, Any] = {
-            "choices": [{
-                "message": self.as_message(),
-                "finish_reason": self.finish_reason,
-            }]
+            "choices": [
+                {
+                    "message": self.as_message(),
+                    "finish_reason": self.finish_reason,
+                }
+            ]
         }
         if self.usage:
             resp["usage"] = self.usage
@@ -210,6 +216,7 @@ class VeniceConversationService:
             and any reconstructed tool calls.
         """
         import time as _time
+
         result = StreamingChatResult()
         # Tool calls keyed by their streaming ``index`` for incremental merge.
         tool_calls_by_index: dict[int, dict[str, Any]] = {}
@@ -269,20 +276,28 @@ class VeniceConversationService:
                             try:
                                 delta = {
                                     "content": getattr(raw_delta, "content", None),
-                                    "tool_calls": getattr(raw_delta, "tool_calls", None),
+                                    "tool_calls": getattr(
+                                        raw_delta, "tool_calls", None
+                                    ),
                                 }
                             except Exception:
                                 continue
 
-                    content_piece = delta.get("content") if isinstance(delta, dict) else None
+                    content_piece = (
+                        delta.get("content") if isinstance(delta, dict) else None
+                    )
                     if content_piece:
                         if result.time_to_first_token is None:
-                            result.time_to_first_token = _time.monotonic() - _stream_open_t
+                            result.time_to_first_token = (
+                                _time.monotonic() - _stream_open_t
+                            )
                         result.content += content_piece
                         if on_delta is not None:
                             await _maybe_await(on_delta, content_piece)
 
-                    tool_calls_raw = delta.get("tool_calls") if isinstance(delta, dict) else None
+                    tool_calls_raw = (
+                        delta.get("tool_calls") if isinstance(delta, dict) else None
+                    )
                     for tc in tool_calls_raw or []:
                         if isinstance(tc, dict):
                             _merge_tool_call_fragment(tool_calls_by_index, tc)
@@ -295,13 +310,21 @@ class VeniceConversationService:
                                     "id": getattr(tc, "id", None),
                                     "type": getattr(tc, "type", "function"),
                                     "function": {
-                                        "name": getattr(func, "name", "") if func else "",
-                                        "arguments": getattr(func, "arguments", "") if func else "",
+                                        "name": (
+                                            getattr(func, "name", "") if func else ""
+                                        ),
+                                        "arguments": (
+                                            getattr(func, "arguments", "")
+                                            if func
+                                            else ""
+                                        ),
                                     },
                                 }
                                 _merge_tool_call_fragment(tool_calls_by_index, tc_dict)
                             except Exception as exc:
-                                _LOGGER.debug("Skipping malformed tool-call fragment: %s", exc)
+                                _LOGGER.debug(
+                                    "Skipping malformed tool-call fragment: %s", exc
+                                )
 
         # Emit reconstructed tool calls in index order.
         result.tool_calls = [

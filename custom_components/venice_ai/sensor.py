@@ -99,8 +99,7 @@ async def async_setup_entry(
     """Set up Venice AI diagnostic sensors from a config entry."""
     runtime_data: VeniceAIRuntimeData = entry.runtime_data
     async_add_entities(
-        VeniceAIUsageSensor(entry, runtime_data, description)
-        for description in SENSORS
+        VeniceAIUsageSensor(entry, runtime_data, description) for description in SENSORS
     )
 
 
@@ -114,7 +113,7 @@ class VeniceAIUsageSensor(SensorEntity):
     def __init__(
         self,
         entry: ConfigEntry,
-        runtime_data: "VeniceAIRuntimeData",
+        runtime_data: VeniceAIRuntimeData,
         description: VeniceAISensorDescription,
     ) -> None:
         """Initialize the usage sensor."""

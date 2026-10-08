@@ -170,6 +170,7 @@ class TestSanitizeHeaderValue:
         per-request headers) would re-mutate an already-mutated value.
         """
         import httpx
+
         raw_key = "  sk-AbCdEfGh1234567890  \n"
         c = client.AsyncVeniceAIClient(api_key=raw_key, http_client=httpx.AsyncClient())
         try:
@@ -177,10 +178,13 @@ class TestSanitizeHeaderValue:
             assert c._api_key == raw_key
             # Header value has only CR/LF removed — surrounding whitespace
             # is preserved so Venice sees the same key the user entered.
-            assert c._headers["Authorization"] == f"Bearer {raw_key.replace(chr(10), '')}"
+            assert (
+                c._headers["Authorization"] == f"Bearer {raw_key.replace(chr(10), '')}"
+            )
             assert "\n" not in c._headers["Authorization"]
         finally:
             import asyncio
+
             asyncio.get_event_loop_policy()
             loop = asyncio.new_event_loop()
             try:

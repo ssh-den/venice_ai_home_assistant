@@ -9,9 +9,8 @@ from __future__ import annotations
 
 import ast
 import importlib.util
-import sys
-import types
 from pathlib import Path
+import types
 from typing import Any
 
 import pytest
@@ -57,7 +56,10 @@ def _load_config_flow_helpers() -> types.ModuleType:
     }
     extracted_nodes: list[ast.ClassDef | ast.FunctionDef] = []
     for node in tree.body:
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in names_to_extract:
+        if (
+            isinstance(node, (ast.ClassDef, ast.FunctionDef))
+            and node.name in names_to_extract
+        ):
             extracted_nodes.append(node)
 
     if len(extracted_nodes) != len(names_to_extract):
@@ -81,8 +83,10 @@ def _load_config_flow_helpers() -> types.ModuleType:
     module.__dict__["iter"] = iter
 
     for node in extracted_nodes:
-        code = compile(ast.Module(body=[node], type_ignores=[]), CONFIG_FLOW_PATH.name, "exec")
-        exec(code, module.__dict__)  # noqa: S102
+        code = compile(
+            ast.Module(body=[node], type_ignores=[]), CONFIG_FLOW_PATH.name, "exec"
+        )
+        exec(code, module.__dict__)
 
     return module
 
@@ -238,4 +242,6 @@ class TestBuildCombinedTTSOptions:
     ) -> None:
         options = helpers._build_combined_tts_options({})
         assert len(options) == 1
-        assert options[0]["value"] == f"{RECOMMENDED_TTS_MODEL} → {RECOMMENDED_TTS_VOICE}"
+        assert (
+            options[0]["value"] == f"{RECOMMENDED_TTS_MODEL} → {RECOMMENDED_TTS_VOICE}"
+        )

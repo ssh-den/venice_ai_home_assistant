@@ -43,7 +43,11 @@ class TestToolCallFragmentMerge:
         acc: dict[int, dict] = {}
         venice_api._merge_tool_call_fragment(
             acc,
-            {"index": 0, "id": "call_1", "function": {"name": "get_", "arguments": '{"a"'}},
+            {
+                "index": 0,
+                "id": "call_1",
+                "function": {"name": "get_", "arguments": '{"a"'},
+            },
         )
         venice_api._merge_tool_call_fragment(
             acc,
@@ -76,9 +80,7 @@ class TestVeniceConversationService:
 
     async def test_chat_forwards_parameters(self, make_client) -> None:
         client = make_client(
-            non_streaming_response={
-                "choices": [{"message": {"content": "answer"}}]
-            }
+            non_streaming_response={"choices": [{"message": {"content": "answer"}}]}
         )
         service = VeniceConversationService(client)
         params = ChatParameters(

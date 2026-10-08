@@ -1,24 +1,25 @@
 """Venice AI TTS platform."""
+
 from __future__ import annotations
 
+from collections.abc import AsyncIterable
 import datetime
 import logging
 import time
-from collections.abc import AsyncIterable
 from typing import Any
 
 from homeassistant.components.tts import (
     ATTR_AUDIO_OUTPUT,
     ATTR_VOICE,
+    TextToSpeechEntity,
     TTSAudioRequest,
     TTSAudioResponse,
-    TextToSpeechEntity,
     TtsAudioType,
     Voice,
 )
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -33,7 +34,6 @@ from .const import (
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
 )
-
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,7 +96,9 @@ class VeniceAITTS(TextToSpeechEntity):
         options = self._config_entry.options
         return {
             ATTR_VOICE: options.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE),
-            ATTR_AUDIO_OUTPUT: options.get(CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT),
+            ATTR_AUDIO_OUTPUT: options.get(
+                CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+            ),
             "tts_model": options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
             "tts_speed": options.get(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED),
         }
@@ -119,19 +121,31 @@ class VeniceAITTS(TextToSpeechEntity):
         self, message: str, language: str, options: dict[str, Any] | None = None
     ) -> TtsAudioType:
         """Generate TTS audio."""
-        voice = self._get_tts_option(options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
-        model = self._get_tts_option(options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        response_format = self._get_tts_option(
-            options, ATTR_AUDIO_OUTPUT, CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+        voice = self._get_tts_option(
+            options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE
         )
-        speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
+        model = self._get_tts_option(
+            options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL
+        )
+        response_format = self._get_tts_option(
+            options,
+            ATTR_AUDIO_OUTPUT,
+            CONF_TTS_RESPONSE_FORMAT,
+            RECOMMENDED_TTS_RESPONSE_FORMAT,
+        )
+        speed = self._get_tts_option(
+            options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED
+        )
 
         _tts_start = time.monotonic()
         _LOGGER.debug(
             "[PERF-TTS] [+0.000s] TTS request at %s — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
             datetime.datetime.now().isoformat(timespec="milliseconds"),
             len(message),
-            voice, model, response_format, speed,
+            voice,
+            model,
+            response_format,
+            speed,
         )
 
         _LOGGER.debug(
@@ -181,7 +195,9 @@ class VeniceAITTS(TextToSpeechEntity):
         if coordinator is None or coordinator.data is None:
             return []
 
-        active_model = self._config_entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        active_model = self._config_entry.options.get(
+            CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL
+        )
 
         # Find the active model in the coordinator's audio_models list and
         # extract its voices using the same dual-source logic as coordinator.py.
@@ -218,19 +234,31 @@ class VeniceAITTS(TextToSpeechEntity):
         message = "".join([chunk async for chunk in request.message_gen])
         options = dict(request.options or {})
 
-        voice = self._get_tts_option(options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE)
-        model = self._get_tts_option(options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        response_format = self._get_tts_option(
-            options, ATTR_AUDIO_OUTPUT, CONF_TTS_RESPONSE_FORMAT, RECOMMENDED_TTS_RESPONSE_FORMAT
+        voice = self._get_tts_option(
+            options, ATTR_VOICE, CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE
         )
-        speed = self._get_tts_option(options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
+        model = self._get_tts_option(
+            options, "tts_model", CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL
+        )
+        response_format = self._get_tts_option(
+            options,
+            ATTR_AUDIO_OUTPUT,
+            CONF_TTS_RESPONSE_FORMAT,
+            RECOMMENDED_TTS_RESPONSE_FORMAT,
+        )
+        speed = self._get_tts_option(
+            options, "tts_speed", CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED
+        )
 
         _tts_start = time.monotonic()
         _LOGGER.debug(
             "[PERF-TTS] [+0.000s] Streaming TTS request at %s — text=%d chars, voice=%s, model=%s, format=%s, speed=%s",
             datetime.datetime.now().isoformat(timespec="milliseconds"),
             len(message),
-            voice, model, response_format, speed,
+            voice,
+            model,
+            response_format,
+            speed,
         )
 
         if not message:
