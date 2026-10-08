@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable
+from collections.abc import AsyncGenerator
 import datetime
 import logging
 import time
@@ -12,11 +12,11 @@ from homeassistant.components.tts import (
     ATTR_AUDIO_OUTPUT,
     ATTR_VOICE,
     TextToSpeechEntity,
-    TTSAudioRequest,
     TTSAudioResponse,
     TtsAudioType,
     Voice,
 )
+from homeassistant.components.tts.entity import TTSAudioRequest
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -269,7 +269,7 @@ class VeniceAITTS(TextToSpeechEntity):
             time.monotonic() - _tts_start,
         )
 
-        async def _timed_stream() -> AsyncIterable[bytes]:
+        async def _timed_stream() -> AsyncGenerator[bytes]:
             """Wrap the Venice streaming generator with per-chunk timing logs."""
             _first_chunk = True
             _chunk_count = 0

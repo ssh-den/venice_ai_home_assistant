@@ -359,12 +359,8 @@ class ChatCompletions:
             raise network_err from err
 
         except json.JSONDecodeError as err:
-            _LOGGER.error(
-                "Failed to decode non-streaming JSON response: %s", response.text
-            )
-            decode_err = VeniceAIError(
-                f"Failed to decode API response: {response.text}"
-            )
+            _LOGGER.error("Failed to decode non-streaming JSON response: %s", err.doc)
+            decode_err = VeniceAIError(f"Failed to decode API response: {err.doc}")
             self.client.metrics.record_error(decode_err)
             raise decode_err from err
 
@@ -449,7 +445,7 @@ class Models:
             )
             raise NetworkError(f"Request error fetching models: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode models JSON response: %s", response.text)
+            _LOGGER.error("Failed to decode models JSON response: %s", err.doc)
             raise VeniceAIError("Failed to decode models API response") from err
 
 
@@ -516,7 +512,7 @@ class Speech:
                     error_detail = f"HTTP {err.response.status_code} for audio request"
                 else:
                     error_detail = err.response.text[:500]
-            except Exception:
+            except (httpx.StreamError, UnicodeDecodeError):
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error(
@@ -598,7 +594,7 @@ class Speech:
                     error_detail = f"HTTP {err.response.status_code} for audio request"
                 else:
                     error_detail = err.response.text[:500]
-            except Exception:
+            except (httpx.StreamError, UnicodeDecodeError):
                 error_detail = f"HTTP {err.response.status_code}"
 
             _LOGGER.error(
@@ -686,9 +682,7 @@ class Transcriptions:
             _LOGGER.error("Venice AI Transcriptions API request error: %s", err)
             raise NetworkError(f"Request error creating transcription: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error(
-                "Failed to decode transcriptions JSON response: %s", response.text
-            )
+            _LOGGER.error("Failed to decode transcriptions JSON response: %s", err.doc)
             raise VeniceAIError("Failed to decode transcriptions API response") from err
 
 
@@ -745,7 +739,7 @@ class Images:
             _LOGGER.error("Venice AI Images API request error: %s", err)
             raise NetworkError(f"Request error generating image: {err}") from err
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to decode images JSON response: %s", response.text)
+            _LOGGER.error("Failed to decode images JSON response: %s", err.doc)
             raise VeniceAIError("Failed to decode images API response") from err
 
 

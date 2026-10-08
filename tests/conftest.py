@@ -1,5 +1,7 @@
 """Shared pytest fixtures and fakes for the Venice AI test suite."""
 
+# pylint: disable=redefined-outer-name
+
 from __future__ import annotations
 
 from collections.abc import Generator
@@ -113,6 +115,7 @@ class FakeStream:
 
     def __init__(self, chunks: list[FakeChunk]) -> None:
         self._chunks = chunks
+        self._iter = iter(chunks)
 
     def __aiter__(self) -> FakeStream:
         self._iter = iter(self._chunks)

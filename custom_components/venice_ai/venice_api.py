@@ -271,17 +271,16 @@ class VeniceConversationService:
                         # Object-style delta: convert to dict via __dict__ or
                         # attribute access. getattr fallback prevents AttributeError
                         # on SDK-version mismatches.
-                        delta = getattr(raw_delta, "__dict__", None)
-                        if delta is None:
-                            try:
-                                delta = {
-                                    "content": getattr(raw_delta, "content", None),
-                                    "tool_calls": getattr(
-                                        raw_delta, "tool_calls", None
-                                    ),
-                                }
-                            except Exception:
-                                continue
+                        delta_attrs: dict[str, Any] | None = getattr(
+                            raw_delta, "__dict__", None
+                        )
+                        if delta_attrs is not None:
+                            delta = delta_attrs
+                        else:
+                            delta = {
+                                "content": getattr(raw_delta, "content", None),
+                                "tool_calls": getattr(raw_delta, "tool_calls", None),
+                            }
 
                     content_piece = (
                         delta.get("content") if isinstance(delta, dict) else None
@@ -302,29 +301,20 @@ class VeniceConversationService:
                         if isinstance(tc, dict):
                             _merge_tool_call_fragment(tool_calls_by_index, tc)
                         else:
-                            # Object-style tool call fragment
-                            try:
-                                func = getattr(tc, "function", None)
-                                tc_dict = {
+                            func = getattr(tc, "function", None)
+                            _merge_tool_call_fragment(
+                                tool_calls_by_index,
+                                {
                                     "index": getattr(tc, "index", 0),
                                     "id": getattr(tc, "id", None),
                                     "type": getattr(tc, "type", "function"),
                                     "function": {
-                                        "name": (
-                                            getattr(func, "name", "") if func else ""
-                                        ),
-                                        "arguments": (
-                                            getattr(func, "arguments", "")
-                                            if func
-                                            else ""
-                                        ),
+                                        "name": getattr(func, "name", "") or "",
+                                        "arguments": getattr(func, "arguments", "")
+                                        or "",
                                     },
-                                }
-                                _merge_tool_call_fragment(tool_calls_by_index, tc_dict)
-                            except Exception as exc:
-                                _LOGGER.debug(
-                                    "Skipping malformed tool-call fragment: %s", exc
-                                )
+                                },
+                            )
 
         # Emit reconstructed tool calls in index order.
         result.tool_calls = [

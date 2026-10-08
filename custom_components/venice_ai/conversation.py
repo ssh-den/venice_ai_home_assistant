@@ -8,11 +8,9 @@ import datetime
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 from homeassistant.components.conversation import (
-    HOME_ASSISTANT_AGENT,
-    MATCH_ALL,
     AssistantContent,
     ChatLog,
     ConversationEntity,
@@ -24,13 +22,15 @@ from homeassistant.components.conversation import (
     UserContent,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_LLM_HASS_API
+from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError, TemplateError
 from homeassistant.helpers import device_registry as dr, intent, llm, selector
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.template import Template
 from homeassistant.util import ulid as ulid_util
+from homeassistant.util.json import JsonObjectType
+import voluptuous as vol
 
 from .client import RateLimitError, VeniceAIError
 from .const import (
@@ -60,7 +60,7 @@ from .venice_api import ChatParameters, VeniceConversationService
 
 if HAS_VOLUPTUOUS_OPENAPI:
     from voluptuous_openapi import (
-        convert as voluptuous_convert,  # type: ignore[import-untyped]
+        convert as voluptuous_convert,
     )
 
 _LOGGER = logging.getLogger(__name__)
@@ -261,7 +261,9 @@ def _convert_chat_log_to_venice_messages(
         if isinstance(msg, UserContent):
             messages.append({"role": "user", "content": msg.content})
         elif isinstance(msg, AssistantContent):
-            raw = _strip_thinking(msg.content) if strip_thinking else msg.content
+            raw = msg.content or ""
+            if strip_thinking:
+                raw = _strip_thinking(raw)
             # Try to decode JSON-encoded assistant messages that carry
             # tool_calls metadata embedded during async_process.
             tool_calls = None
@@ -467,7 +469,7 @@ class VeniceAIConversationEntity(ConversationEntity):
         return chat_log
 
     @property
-    def supported_languages(self) -> list[str]:
+    def supported_languages(self) -> list[str] | Literal["*"]:
         """Return list of supported languages."""
         return MATCH_ALL
 
@@ -925,122 +927,43 @@ class VeniceAIConversationEntity(ConversationEntity):
                         )
                         continue
 
-                    # SEC-2: validate that tool args are a JSON object before
-                    # invoking the tool. A non-object (e.g. array, string, or
-                    # number) almost certainly indicates a malformed or hostile
-                    # model output and must not be passed to HA tools that
-                    # expect keyword arguments.
+                    tool_result: JsonObjectType
                     if not isinstance(tool_args, dict):
                         _LOGGER.warning(
-                            "SEC-2: tool %s returned non-object args (%s); skipping",
+                            "Tool %s returned non-object args (%s); skipping",
                             tool_name,
                             type(tool_args).__name__,
                         )
                         tool_result = {
                             "error": f"Tool {tool_name} arguments must be a JSON object",
                         }
+                    elif chat_log.llm_api is None:
+                        tool_result = {"error": "No Home Assistant API is configured"}
+                    else:
+                        _tool_start = time.monotonic()
                         try:
-                            _trc = ToolResultContent(
-                                agent_id=DOMAIN,
-                                tool_name=tool_name,
-                                tool_call_id=call_id,
-                                tool_result=tool_result,
+                            tool_result = await chat_log.llm_api.async_call_tool(
+                                llm.ToolInput(tool_name=tool_name, tool_args=tool_args)
                             )
-                        except TypeError:
-                            _trc = ToolResultContent(
-                                tool_call_id=call_id,
-                                tool_result=tool_result,
-                            )
-                        chat_log.content.append(_trc)
-                        continue
-
-                    # Find matching tool and invoke via the public HA LLM API
-                    tool_result = None
-                    _tool_start = time.monotonic()
-                    for tool in tools:
-                        if tool.name == tool_name:
-                            try:
-                                # ToolInput signature varies across HA versions.
-                                # Try the full signature first (older HA); fall
-                                # back to the minimal form if kwargs are rejected.
-                                try:
-                                    tool_input = llm.ToolInput(
-                                        tool_name=tool_name,
-                                        tool_args=tool_args,
-                                        platform=DOMAIN,
-                                        context=user_input.context,
-                                        user_prompt=user_input.text,
-                                        assistant=HOME_ASSISTANT_AGENT,
-                                        device_id=user_input.device_id,
-                                    )
-                                except TypeError:
-                                    tool_input = llm.ToolInput(
-                                        tool_name=tool_name,
-                                        tool_args=tool_args,
-                                    )
-                                # Some tools (e.g. GetLiveContext) have non-standard
-                                # async_call signatures that require extra parameters
-                                # like llm_context. Inspect the signature to determine
-                                # what parameters are needed.
-                                import inspect
-
-                                sig = inspect.signature(tool.async_call)
-                                params = list(sig.parameters.keys())
-                                _LOGGER.debug(
-                                    "Tool %s async_call signature params: %s",
-                                    tool_name,
-                                    params,
-                                )
-                                # Build call args based on signature
-                                call_kwargs = {}
-                                if "llm_context" in params:
-                                    call_kwargs["llm_context"] = (
-                                        user_input.as_llm_context(DOMAIN)
-                                    )
-                                tool_result = await tool.async_call(
-                                    self.hass, tool_input, **call_kwargs
-                                )
-                                _LOGGER.debug(
-                                    "[PERF] [+%.3fs] HA tool %s returned in %.3fs: %s",
-                                    time.monotonic() - _turn_start,
-                                    tool_name,
-                                    time.monotonic() - _tool_start,
-                                    tool_result,
-                                )
-                            except Exception as tool_err:
-                                _LOGGER.warning(
-                                    "Tool %s failed: %s", tool_name, tool_err
-                                )
-                                tool_result = {"error": str(tool_err)}
-                            break
-
-                    if tool_result is None:
-                        _LOGGER.warning(
-                            "Tool %s not found in HA Assist API tools list", tool_name
+                        except (HomeAssistantError, vol.Invalid) as tool_err:
+                            _LOGGER.warning("Tool %s failed: %s", tool_name, tool_err)
+                            tool_result = {"error": str(tool_err)}
+                        _LOGGER.debug(
+                            "[PERF] [+%.3fs] HA tool %s returned in %.3fs: %s",
+                            time.monotonic() - _turn_start,
+                            tool_name,
+                            time.monotonic() - _tool_start,
+                            tool_result,
                         )
-                        tool_result = {
-                            "error": (
-                                f"Tool '{tool_name}' is not available. "
-                                "Current entity states are in your system context - read from there."
-                            )
-                        }
 
-                    # ToolResultContent signature varies across HA versions:
-                    # - older HA: ToolResultContent(tool_call_id, tool_result)
-                    # - newer HA: ToolResultContent(agent_id, tool_name, tool_call_id, tool_result)
-                    try:
-                        tool_result_content = ToolResultContent(
+                    chat_log.content.append(
+                        ToolResultContent(
                             agent_id=DOMAIN,
                             tool_name=tool_name,
                             tool_call_id=call_id,
                             tool_result=tool_result,
                         )
-                    except TypeError:
-                        tool_result_content = ToolResultContent(
-                            tool_call_id=call_id,
-                            tool_result=tool_result,
-                        )
-                    chat_log.content.append(tool_result_content)
+                    )
 
                 # Trim chat log to prevent unbounded growth after processing all tool calls
                 _trim_chat_log(chat_log)

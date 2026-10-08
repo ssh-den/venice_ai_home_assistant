@@ -42,7 +42,7 @@ class TestFormatVeniceSchema:
         assert schema == {"a": {"type": "string"}, "b": {"type": "integer"}}
 
     def test_empty_schema(self) -> None:
-        assert _format_venice_schema({}) == {}
+        assert not _format_venice_schema({})
 
 
 class TestConvertSchemaToHashable:

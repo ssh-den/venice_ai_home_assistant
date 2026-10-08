@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from types import MappingProxyType
 from typing import Any
@@ -10,19 +11,8 @@ from homeassistant.config_entries import (
     ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlow,
+    OptionsFlowWithReload,
 )
-import voluptuous as vol
-
-# OptionsFlowWithReload was introduced in HA 2024.1 and automatically reloads
-# the integration when options are saved, removing the need for a manual
-# add_update_listener in __init__.py.  We fall back to plain OptionsFlow so
-# the integration still loads on older cores (manifest minimum is 2024.4.0,
-# so the try-branch will always win in practice).
-try:
-    from homeassistant.config_entries import OptionsFlowWithReload as _OptionsFlowBase
-except ImportError:  # pragma: no cover - only hit on very old HA cores
-    _OptionsFlowBase = OptionsFlow  # type: ignore[assignment, misc]
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.httpx_client import get_async_client
@@ -30,12 +20,14 @@ from homeassistant.helpers.selector import (
     BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
+    NumberSelectorMode,
     SelectOptionDict,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
     TemplateSelector,
 )
+import voluptuous as vol
 
 from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
 from .const import (
@@ -323,7 +315,7 @@ def _parse_combined_tts_value(value: str) -> tuple[str, str] | None:
 def _resolve_combined_tts_value(
     tts_info: dict[str, _TTSModelInfo],
     user_input: dict[str, Any] | None,
-    saved_options: dict[str, Any],
+    saved_options: Mapping[str, Any],
 ) -> str:
     """Return the 'model → voice' string that should be pre-selected.
 
@@ -366,7 +358,7 @@ def _resolve_combined_tts_value(
 # ---------------------------------------------------------------------------
 
 
-class VeniceAIOptionsFlow(_OptionsFlowBase):
+class VeniceAIOptionsFlow(OptionsFlowWithReload):
     """Options flow for Venice AI.
 
     Subclasses ``OptionsFlowWithReload`` (HA ≥ 2024.1) so the integration is
@@ -506,104 +498,11 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
         return chat_options, tts_info, stt_options, errors
 
     async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
-        """Return a list of available HA LLM API IDs as SelectOptionDicts.
-
-        Tries three discovery methods in order, falling through to the next
-        method only if the previous found zero APIs. This ensures that if
-        ``async_get_apis`` exists but returns an empty iterable (e.g. on some
-        HA versions) we still fall back to probing known API IDs directly.
-        """
-        # The control field is a multiple-select, so an explicit "None" entry is
-        # not needed — an empty selection disables control.
-        api_options: list[SelectOptionDict] = []
-
-        # Method 1: async_get_apis (HA ≥ 2024.x - returns API objects with .id/.name)
-        if hasattr(llm, "async_get_apis"):
-            try:
-                apis = list(llm.async_get_apis(self.hass))
-                for api in apis:
-                    api_options.append(
-                        SelectOptionDict(
-                            label=getattr(api, "name", api.id), value=api.id
-                        )
-                    )
-                _LOGGER.debug("Found %d LLM API(s) via async_get_apis", len(apis))
-                # Only return if we actually discovered something; otherwise fall through.
-                if api_options:
-                    return api_options
-            except Exception as err:
-                _LOGGER.debug("async_get_apis failed: %s", err)
-
-        # Method 2: async_get_api_list (returns list of API ID strings)
-        if hasattr(llm, "async_get_api_list"):
-            try:
-                api_ids = await llm.async_get_api_list(self.hass)
-                if isinstance(api_ids, list):
-                    for api_id in api_ids:
-                        if isinstance(api_id, str):
-                            # Avoid duplicates from Method 1
-                            existing_values = {o["value"] for o in api_options}
-                            if api_id not in existing_values:
-                                api_options.append(
-                                    SelectOptionDict(
-                                        label=api_id.capitalize(), value=api_id
-                                    )
-                                )
-                    _LOGGER.debug(
-                        "Found %d LLM API(s) via async_get_api_list", len(api_ids)
-                    )
-                    if api_options:
-                        return api_options
-            except Exception as err:
-                _LOGGER.debug("async_get_api_list failed: %s", err)
-
-        # Method 3: Probe well-known API IDs directly.
-        # This is the reliable fallback: ``llm.async_get_api`` raises if the
-        # API doesn't exist, so any ID that doesn't raise is genuinely available.
-        known_apis = [("assist", "Assist"), ("homeassistant", "Home Assistant")]
-        existing_values = {o["value"] for o in api_options}
-        for api_id, label in known_apis:
-            if api_id in existing_values:
-                continue
-            try:
-                # LLMContext signature varies across HA versions.
-                # Try the full signature first; if it raises TypeError (e.g.
-                # newer HA dropped user_prompt) fall back to the minimal form.
-                try:
-                    ctx = llm.LLMContext(
-                        platform=DOMAIN,
-                        context=None,
-                        user_prompt=None,
-                        language=None,
-                        assistant=None,
-                        device_id=None,
-                    )
-                except TypeError:
-                    ctx = llm.LLMContext(
-                        platform=DOMAIN,
-                        context=None,
-                        language=None,
-                        assistant=None,
-                        device_id=None,
-                    )
-                await llm.async_get_api(self.hass, api_id, ctx)
-                api_options.append(SelectOptionDict(label=label, value=api_id))
-                _LOGGER.debug("Found LLM API '%s' via direct probe", api_id)
-            except Exception:
-                # API not available on this HA instance — skip silently.
-                pass
-
-        if len(api_options) == 1:
-            # Nothing discovered at all; add "assist" as a best-effort fallback
-            # so the user is never left with only "None".  The conversation
-            # entity will log a warning if the API turns out not to exist at
-            # runtime.
-            _LOGGER.debug(
-                "No LLM APIs discovered; adding 'assist' as best-effort fallback"
-            )
-            api_options.append(SelectOptionDict(label="Assist", value="assist"))
-
-        return api_options
+        """Return the available Home Assistant LLM APIs as select options."""
+        return [
+            SelectOptionDict(label=api.name, value=api.id)
+            for api in llm.async_get_apis(self.hass)
+        ]
 
     def _validate_numeric_options(
         self,
@@ -661,13 +560,19 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     )
                 ),
                 vol.Optional(CONF_MAX_TOKENS): NumberSelector(
-                    NumberSelectorConfig(min=1, max=32768, step=1, mode="slider")
+                    NumberSelectorConfig(
+                        min=1, max=32768, step=1, mode=NumberSelectorMode.SLIDER
+                    )
                 ),
                 vol.Optional(CONF_TOP_P): NumberSelector(
-                    NumberSelectorConfig(min=0.0, max=1.0, step=0.05, mode="slider")
+                    NumberSelectorConfig(
+                        min=0.0, max=1.0, step=0.05, mode=NumberSelectorMode.SLIDER
+                    )
                 ),
                 vol.Optional(CONF_TEMPERATURE): NumberSelector(
-                    NumberSelectorConfig(min=0.0, max=2.0, step=0.05, mode="slider")
+                    NumberSelectorConfig(
+                        min=0.0, max=2.0, step=0.05, mode=NumberSelectorMode.SLIDER
+                    )
                 ),
                 vol.Optional(
                     CONF_LLM_HASS_API,
@@ -684,7 +589,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 vol.Optional(CONF_DISABLE_THINKING): BooleanSelector(),
                 vol.Optional(CONF_STREAM_RESPONSE): BooleanSelector(),
                 vol.Optional(CONF_MAX_TOOL_ITERATIONS): NumberSelector(
-                    NumberSelectorConfig(min=1, max=20, step=1, mode="slider")
+                    NumberSelectorConfig(
+                        min=1, max=20, step=1, mode=NumberSelectorMode.SLIDER
+                    )
                 ),
                 # Single combined TTS model + voice selector.
                 # Entries look like "kokoro → af_heart".  The dropdown is
@@ -706,7 +613,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                     )
                 ),
                 vol.Optional(CONF_TTS_SPEED): NumberSelector(
-                    NumberSelectorConfig(min=0.25, max=4.0, step=0.25, mode="slider")
+                    NumberSelectorConfig(
+                        min=0.25, max=4.0, step=0.25, mode=NumberSelectorMode.SLIDER
+                    )
                 ),
                 # STT options
                 vol.Optional(CONF_STT_MODEL): SelectSelector(
@@ -731,7 +640,9 @@ class VeniceAIOptionsFlow(_OptionsFlowBase):
                 ),
                 vol.Optional(CONF_STT_TIMESTAMPS): BooleanSelector(),
                 vol.Optional(CONF_REQUEST_TIMEOUT): NumberSelector(
-                    NumberSelectorConfig(min=10.0, max=300.0, step=5.0, mode="slider")
+                    NumberSelectorConfig(
+                        min=10.0, max=300.0, step=5.0, mode=NumberSelectorMode.SLIDER
+                    )
                 ),
             }
         )

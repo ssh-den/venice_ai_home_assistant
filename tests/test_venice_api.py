@@ -59,7 +59,7 @@ class TestToolCallFragmentMerge:
     def test_non_dict_fragment_ignored(self) -> None:
         acc: dict[int, dict] = {}
         venice_api._merge_tool_call_fragment(acc, "nonsense")  # type: ignore[arg-type]
-        assert acc == {}
+        assert not acc
 
     def test_multiple_indices_kept_separate(self) -> None:
         acc: dict[int, dict] = {}
