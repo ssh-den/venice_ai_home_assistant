@@ -2,214 +2,140 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
+from typing import Any
 
-from homeassistant.components import conversation
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.components import ai_task, conversation
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+from voluptuous_openapi import convert
 
+from . import VeniceAIConfigEntry
 from .client import VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_DISABLE_THINKING,
     CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_DISABLE_THINKING,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
 )
-from .venice_api import ChatParameters, VeniceConversationService
+from .conversation import _strip_thinking
+from .venice_api import ChatParameters, VeniceConversationService, extract_json
 
 _LOGGER = logging.getLogger(__name__)
-
-try:
-    from homeassistant.components import ai_task
-
-    _HAS_AI_TASK = True
-except ImportError:
-    ai_task = None  # type: ignore[assignment]
-    _HAS_AI_TASK = False
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: VeniceAIConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up AI Task entities."""
-    if not _HAS_AI_TASK:
-        _LOGGER.warning(
-            "AI Task platform is not available in this Home Assistant version"
+    async_add_entities([VeniceAITaskEntity(entry)])
+
+
+def _chat_log_to_messages(chat_log: conversation.ChatLog) -> list[dict[str, Any]]:
+    """Convert the AI Task chat log into Venice chat messages."""
+    messages: list[dict[str, Any]] = []
+    for content in chat_log.content:
+        if isinstance(content, conversation.SystemContent):
+            messages.append({"role": "system", "content": content.content})
+        elif isinstance(content, conversation.UserContent):
+            messages.append({"role": "user", "content": content.content})
+        elif isinstance(content, conversation.AssistantContent):
+            messages.append({"role": "assistant", "content": content.content or ""})
+    return messages
+
+
+class VeniceAITaskEntity(ai_task.AITaskEntity):
+    """Venice AI AI Task entity."""
+
+    _attr_has_entity_name = True
+    _attr_name = "AI Task"
+    _attr_supported_features = ai_task.AITaskEntityFeature.GENERATE_DATA
+
+    def __init__(self, entry: VeniceAIConfigEntry) -> None:
+        """Initialize the entity."""
+        self.entry = entry
+        self._attr_unique_id = f"{entry.entry_id}_task"
+        self._attr_device_info = dr.DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=entry.title,
+            manufacturer="Venice AI",
+            model="AI Task",
+            entry_type=dr.DeviceEntryType.SERVICE,
         )
-        return
-    _LOGGER.debug("Setting up AI Task entities for entry %s", entry.entry_id)
-    from . import VeniceAIRuntimeData
+        self._service = VeniceConversationService(entry.runtime_data.client)
 
-    runtime_data: VeniceAIRuntimeData = entry.runtime_data
-    if not runtime_data or not runtime_data.client:
-        _LOGGER.error(
-            "Venice AI client not available in runtime_data for entry %s",
-            entry.entry_id,
+    async def _async_generate_data(
+        self,
+        task: ai_task.GenDataTask,
+        chat_log: conversation.ChatLog,
+    ) -> ai_task.GenDataTaskResult:
+        """Handle a generate data task."""
+        messages = _chat_log_to_messages(chat_log)
+        if not messages or messages[-1]["role"] != "user":
+            raise HomeAssistantError("No user message found in chat log")
+
+        if task.structure:
+            schema = convert(task.structure)
+            messages.insert(
+                len(messages) - 1,
+                {
+                    "role": "system",
+                    "content": (
+                        "Respond only with a JSON object matching this JSON "
+                        "schema, without any surrounding text:\n"
+                        f"{json.dumps(schema)}"
+                    ),
+                },
+            )
+
+        options = self.entry.options
+        venice_params = (
+            {"disable_thinking": True}
+            if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
+            else None
         )
-        return
-    entity = VeniceAITaskEntity(entry)
-    _LOGGER.debug("Created VeniceAITaskEntity: %s", entity.unique_id)
-    # Store entity reference in runtime_data so the service handler can find it
-    # without using hass.data (Architecture 7.1 fix)
-    runtime_data.ai_task_entity = entity
-    async_add_entities([entity])
-    _LOGGER.debug("Added VeniceAITaskEntity to Home Assistant")
+        params = ChatParameters(
+            model=options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+            max_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
+            temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+            venice_parameters=venice_params,
+        )
 
+        try:
+            response = await self._service.chat(messages, params)
+        except VeniceAIError as err:
+            raise HomeAssistantError(f"Error generating data: {err}") from err
 
-if not _HAS_AI_TASK:
-    # Define a dummy class so the module is import-safe when ai_task is unavailable
-    class _DummyAITaskEntity:
-        """Placeholder when ai_task is unavailable."""
+        choices = response.get("choices") if isinstance(response, dict) else None
+        if not choices:
+            raise HomeAssistantError("Invalid Venice AI response")
+        text = _strip_thinking(choices[0].get("message", {}).get("content") or "")
 
-    VeniceAITaskEntity = _DummyAITaskEntity  # type: ignore[misc,assignment]
-else:
+        chat_log.async_add_assistant_content_without_tools(
+            conversation.AssistantContent(agent_id=self.entity_id, content=text)
+        )
 
-    class VeniceAITaskEntity(ai_task.AITaskEntity):
-        """Venice AI AI Task entity."""
-
-        _attr_has_entity_name = True
-        _attr_name = "AI Task"
-
-        def __init__(self, entry: ConfigEntry) -> None:
-            """Initialize the entity."""
-            super().__init__()
-            self.entry = entry
-            self._attr_unique_id = f"{entry.entry_id}_task"
-            self._attr_device_info = dr.DeviceInfo(
-                identifiers={(DOMAIN, entry.entry_id)},
-                name=entry.title,
-                manufacturer="Venice AI",
-                model="AI Task",
-                entry_type=dr.DeviceEntryType.SERVICE,
-            )
-            # Fix 6: delegate API calls through the service layer so retry
-            # logic, metrics, and any future middleware are applied consistently.
-            self._service = VeniceConversationService(entry.runtime_data.client)
-            self._attr_supported_features = ai_task.AITaskEntityFeature.GENERATE_DATA
-            _LOGGER.debug(
-                "Initialized VeniceAITaskEntity for entry %s (runtime_data=%s, unique_id=%s)",
-                entry.entry_id,
-                bool(entry.runtime_data),
-                self._attr_unique_id,
+        if not task.structure:
+            return ai_task.GenDataTaskResult(
+                conversation_id=chat_log.conversation_id, data=text
             )
 
-        async def async_added_to_hass(self) -> None:
-            """Signal that the AI Task entity is fully registered (HIGH-1).
+        try:
+            data = extract_json(text)
+        except json.JSONDecodeError as err:
+            _LOGGER.error("Failed to parse JSON response: %s. Response: %s", err, text)
+            raise HomeAssistantError("Error parsing structured response") from err
 
-            HA calls this hook once the entity has been added to the state
-            machine. Setting the ``ai_task_ready`` event releases any service
-            calls that were waiting on the platform setup synchronization
-            barrier in ``__init__.py``.
-            """
-            await super().async_added_to_hass()
-            ready = getattr(self.entry.runtime_data, "ai_task_ready", None)
-            if ready is not None:
-                ready.set()
-                _LOGGER.debug(
-                    "AI Task entity for entry %s ready; setup barrier released",
-                    self.entry.entry_id,
-                )
-
-        async def async_generate_data(
-            self,
-            task: ai_task.GenDataTask,
-            chat_log: conversation.ChatLog,
-        ) -> ai_task.GenDataTaskResult:
-            """Handle a generate data task.
-
-            Public entry-point that service handlers (and HA's ai_task platform)
-            should call.  Internally delegates to _async_generate_data so the
-            implementation stays testable and overridable.
-            """
-            return await self._async_generate_data(task, chat_log)
-
-        async def _async_generate_data(
-            self,
-            task: ai_task.GenDataTask,
-            chat_log: conversation.ChatLog,
-        ) -> ai_task.GenDataTaskResult:
-            """Internal implementation of generate data task."""
-            # Build a local messages list without mutating chat_log.content
-            messages = []
-            for msg in chat_log.content:
-                if isinstance(msg, conversation.SystemContent):
-                    messages.append({"role": "system", "content": msg.content})
-                elif isinstance(msg, conversation.UserContent):
-                    messages.append({"role": "user", "content": msg.content})
-                elif isinstance(msg, conversation.AssistantContent):
-                    venice_msg = {
-                        "role": "assistant",
-                        "content": msg.content or "",
-                    }
-                    messages.append(venice_msg)
-
-            # Append task instructions as a user message in the local list
-            messages.append({"role": "user", "content": task.instructions})
-
-            if not messages or messages[-1].get("role") != "user":
-                raise HomeAssistantError("No user message found in chat log")
-
-            # Use the configured chat model from options
-            model = self.entry.options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-
-            # Use configured options from config entry instead of hardcoded values
-            max_tokens = self.entry.options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS)
-            temperature = self.entry.options.get(
-                CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE
-            )
-
-            try:
-                # Fix 6: use the service layer instead of calling the client directly.
-                chat_params = ChatParameters(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
-                response_data = await self._service.chat(messages, chat_params)
-
-                if not response_data or not response_data.get("choices"):
-                    raise HomeAssistantError("Invalid Venice AI response")
-
-                text = response_data["choices"][0].get("message", {}).get("content", "")
-
-                if not task.structure:
-                    return ai_task.GenDataTaskResult(
-                        conversation_id=chat_log.conversation_id,
-                        data=text,
-                    )
-
-                try:
-                    data = json.loads(text)
-                except json.JSONDecodeError as err:
-                    _LOGGER.error(
-                        "Failed to parse JSON response: %s. Response: %s",
-                        err,
-                        text,
-                    )
-                    raise HomeAssistantError(
-                        "Error parsing structured response"
-                    ) from err
-
-                return ai_task.GenDataTaskResult(
-                    conversation_id=chat_log.conversation_id,
-                    data=data,
-                )
-
-            except VeniceAIError as err:
-                _LOGGER.error("Venice AI error during task generation: %s", err)
-                raise HomeAssistantError(f"Error generating data: {err}") from err
-            except asyncio.CancelledError:
-                raise
-            except Exception as err:
-                _LOGGER.exception("Unexpected error during task generation")
-                raise HomeAssistantError(f"Unexpected error: {err}") from err
+        return ai_task.GenDataTaskResult(
+            conversation_id=chat_log.conversation_id, data=data
+        )

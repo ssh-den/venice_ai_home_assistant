@@ -1,5 +1,51 @@
-# Services for the Venice AI integration
+generate_image:
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: venice_ai
+    prompt:
+      required: true
+      selector:
+        text:
+          multiline: true
+    size:
+      default: "1024x1024"
+      selector:
+        select:
+          options:
+            - "1024x1024"
+            - "1024x1792"
+            - "1792x1024"
+    quality:
+      default: standard
+      selector:
+        select:
+          options:
+            - standard
+            - hd
+    style:
+      default: vivid
+      selector:
+        select:
+          options:
+            - vivid
+            - natural
 
-# Image generation is registered programmatically in __init__.py
-# The generate_image service schema is defined there via
-# hass.services.async_register(...).
+ai_task:
+  fields:
+    config_entry:
+      required: true
+      selector:
+        config_entry:
+          integration: venice_ai
+    task:
+      required: true
+      selector:
+        text:
+          multiline: true
+    structure:
+      selector:
+        text:
+          multiline: true

@@ -20,6 +20,7 @@ interchangeably.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 import logging
 from typing import Any
 
@@ -96,7 +97,6 @@ class ToolCall:
         """Return the decoded arguments dict, caching the result on first parse."""
         if self.args_dict is not None:
             return self.args_dict
-        import json
 
         try:
             decoded = json.loads(self.arguments) if self.arguments else {}
@@ -388,3 +388,12 @@ async def _maybe_await(callback: Any, *args: Any) -> None:
     result = callback(*args)
     if asyncio.iscoroutine(result):
         await result
+
+
+def extract_json(text: str) -> Any:
+    """Parse a JSON payload, tolerating surrounding markdown code fences."""
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else ""
+        cleaned = cleaned.rsplit("```", 1)[0]
+    return json.loads(cleaned)

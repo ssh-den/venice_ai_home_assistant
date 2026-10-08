@@ -2,15 +2,98 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import asynccontextmanager
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.const import CONF_API_KEY
+from homeassistant.core import HomeAssistant
+from homeassistant.setup import async_setup_component
 import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from custom_components.venice_ai.client import VeniceAIMetrics
+from custom_components.venice_ai.const import (
+    DOMAIN,
+    RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_STT_MODEL,
+    RECOMMENDED_TTS_MODEL,
+)
+
+MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
+    "text": [{"id": RECOMMENDED_CHAT_MODEL, "type": "text"}],
+    "tts": [
+        {
+            "id": RECOMMENDED_TTS_MODEL,
+            "type": "tts",
+            "model_spec": {"voices": ["bm_daniel", "af_heart"]},
+        }
+    ],
+    "asr": [{"id": RECOMMENDED_STT_MODEL, "type": "asr"}],
+    "image": [
+        {"id": "venice-sd35", "type": "image"},
+        {"id": "hidream", "type": "image"},
+    ],
+}
 
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Enable loading the custom integration in every test."""
+
+
+@pytest.fixture
+async def ha_core(hass: HomeAssistant) -> None:
+    """Set up the homeassistant core component required by conversation."""
+    assert await async_setup_component(hass, "homeassistant", {})
+
+
+@pytest.fixture
+def mock_config_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Return a Venice AI config entry added to hass."""
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Venice AI",
+        data={CONF_API_KEY: "test-key"},
+        options={},
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+@pytest.fixture
+def mock_client() -> Generator[MagicMock]:
+    """Patch the Venice AI client used by the integration."""
+    client = MagicMock()
+    client.metrics = VeniceAIMetrics()
+    client.close = AsyncMock()
+
+    async def _list(model_type: str = "text") -> list[dict[str, Any]]:
+        return [dict(m) for m in MODELS_BY_TYPE.get(model_type, [])]
+
+    client.models.list = AsyncMock(side_effect=_list)
+    client.chat.create_non_streaming = AsyncMock(
+        return_value={"choices": [{"message": {"content": "ok"}}]}
+    )
+    client.images.generate = AsyncMock(
+        return_value={"data": [{"url": "https://example.com/a.png", "b64_json": "x"}]}
+    )
+    with patch("custom_components.venice_ai.AsyncVeniceAIClient", return_value=client):
+        yield client
+
+
+@pytest.fixture
+async def setup_integration(
+    hass: HomeAssistant,
+    ha_core: None,
+    mock_config_entry: MockConfigEntry,
+    mock_client: MagicMock,
+) -> MockConfigEntry:
+    """Set up the integration with a mocked client."""
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    return mock_config_entry
 
 
 class FakeChunk:
