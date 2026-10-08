@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.venice_ai.client import AuthenticationError, NetworkError
@@ -66,3 +67,21 @@ async def test_request_timeout_option_passed_to_client(
     ) as client_cls:
         assert await hass.config_entries.async_setup(entry.entry_id)
     assert client_cls.call_args.kwargs["timeout"] == 30.0
+
+
+async def test_entity_unique_ids_are_stable(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    """Unique IDs must not change, or existing registry entries are orphaned."""
+    entry_id = setup_integration.entry_id
+    unique_ids = {
+        entity.unique_id
+        for entity in er.async_entries_for_config_entry(er.async_get(hass), entry_id)
+    }
+    assert {
+        f"{entry_id}_conversation",
+        f"{entry_id}_task",
+        f"{entry_id}_tts",
+        f"{entry_id}_stt",
+        f"{entry_id}_request_count",
+    } <= unique_ids
