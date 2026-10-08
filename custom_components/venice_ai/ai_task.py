@@ -26,8 +26,12 @@ from .const import (
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
 )
-from .conversation import _strip_thinking
-from .venice_api import ChatParameters, VeniceConversationService, extract_json
+from .venice_api import (
+    ChatParameters,
+    VeniceConversationService,
+    extract_json,
+    strip_thinking,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,7 +123,7 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         choices = response.get("choices") if isinstance(response, dict) else None
         if not choices:
             raise HomeAssistantError("Invalid Venice AI response")
-        text = _strip_thinking(choices[0].get("message", {}).get("content") or "")
+        text = strip_thinking(choices[0].get("message", {}).get("content") or "")
 
         chat_log.async_add_assistant_content_without_tools(
             conversation.AssistantContent(agent_id=self.entity_id, content=text)

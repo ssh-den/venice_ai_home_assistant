@@ -387,3 +387,30 @@ def extract_json(text: str) -> Any:
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else ""
         cleaned = cleaned.rsplit("```", 1)[0]
     return json.loads(cleaned)
+
+
+def strip_thinking(text: str) -> str:
+    """Remove <think>...</think> blocks from model output.
+
+    Handles both the XML-style tags used by some reasoning models and the
+    literal ' thinking' / ' end of thinking' markers emitted by Venice AI.
+    """
+    if not text:
+        return text
+    # XML-style <think>...</think>
+    while True:
+        start = text.lower().find("<think>")
+        if start == -1:
+            break
+        end = text.lower().find("</think>", start)
+        if end == -1:
+            # unmatched open tag - strip to end to be safe
+            text = text[:start].strip()
+            break
+        text = text[:start] + text[end + 8 :]
+    # Venice-style ' thinking' ... ' end of thinking'
+    if " thinking" in text:
+        parts = text.split(" end of thinking")
+        if len(parts) > 1:
+            text = parts[-1].strip()
+    return text.strip()

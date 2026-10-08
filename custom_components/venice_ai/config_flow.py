@@ -48,6 +48,7 @@ from .const import (
     CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
     CONF_TTS_VOICE,
+    DEFAULT_SYSTEM_PROMPT,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_DISABLE_THINKING,
@@ -69,14 +70,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Try to import DEFAULT_SYSTEM_PROMPT; fallback if not available
-try:
-    from .conversation import DEFAULT_SYSTEM_PROMPT
-except ImportError:
-    _LOGGER.warning(
-        "Could not import DEFAULT_SYSTEM_PROMPT from conversation.py, using fallback."
-    )
-    DEFAULT_SYSTEM_PROMPT = "You are a helpful AI assistant."
 
 # ---------------------------------------------------------------------------
 # Combined TTS model + voice selector
