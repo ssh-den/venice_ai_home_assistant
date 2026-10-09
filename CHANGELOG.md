@@ -4,6 +4,50 @@ All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [2.1.0] — 2026-10-09
+
+### Added
+- Speech languages follow the selected models: Kokoro voices are grouped by
+  their language, Parakeet offers its European languages, and other models are
+  offered for every language. The pipeline language is sent to Venice for both
+  text-to-speech and speech-to-text.
+- Text-to-speech synthesizes streamed answers sentence by sentence, so the first
+  sentence plays while the model is still answering. Long texts are split to
+  stay within the Venice limit of 4096 characters per request.
+- CI runs hassfest, the test suite, linters and type checkers.
+- Manually triggered workflow that tags and publishes a release from the
+  changelog.
+
+### Changed
+- The audio format follows the formats the TTS model supports: MP3, or WAV for
+  models without MP3. Home Assistant converts audio for each speaker.
+- Non-streamed answers use the same chat log path as streamed ones.
+- All entities share one device and use entity names relative to it.
+- `codeowners` points to the fork maintainer.
+- The manifest keys follow the order hassfest requires, and the unsupported
+  `homeassistant` key was dropped; the minimum version stays in `hacs.json`.
+
+### Removed
+- **TTS response format**, **STT response format** and **STT timestamps**
+  options. The TTS format comes from the model; subtitle formats and timestamps
+  are of no use to a voice assistant.
+- The deprecated model repair issue, which had no models to report.
+- Repeated API key validation during setup; the first coordinator refresh
+  already checks it.
+
+### Fixed
+- AI Task structures built from selectors, as sent by `ai_task.generate_data`,
+  could not be converted to a JSON schema.
+- **Strip thinking response** was off for entries that had never saved options,
+  although the options form showed it as on.
+- The `ogg` TTS format and the `srt`, `vtt` and `verbose_json` STT formats were
+  offered although Venice does not support them.
+- Answers that mentioned "end of thinking" were cut off.
+- A reply whose tool calls were all malformed made the agent call the model
+  again until the iteration limit.
+- TTS and STT were checked against the combined list of audio models, so a
+  configured TTS model that only existed as an STT model went unreported.
+
 ## [2.0.0] — 2026-10-09
 
 This release is published from the
@@ -46,9 +90,6 @@ fork and differs noticeably from upstream.
 - Unused and non-working `todo.py` and `task_types.py` modules. They were never
   loaded as a platform, so no entities disappear.
 - Translations for errors, aborts and services that were never used.
-- The deprecated model repair issue, which had no models to report.
-- Repeated API key validation during setup; the first coordinator refresh
-  already checks it.
 
 ### Fixed
 - The `ai_task` action failed on every call.
@@ -58,10 +99,6 @@ fork and differs noticeably from upstream.
 - `request_timeout` was ignored by most requests.
 - Select options lost their values in the options flow.
 - Downgraded config entries were accepted by the migration.
-- AI Task structures built from selectors, as sent by `ai_task.generate_data`,
-  could not be converted to a JSON schema.
-- **Strip thinking response** was off for entries that had never saved options,
-  although the options form showed it as on.
 
 ## [1.0.0] — upstream
 
@@ -121,6 +158,7 @@ fork and differs noticeably from upstream.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
+[2.1.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.1.0
 [2.0.0]: https://github.com/ssh-den/venice_ai_home_assistant
 [1.0.0]: https://github.com/grasponcrypto/venice_ai
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0

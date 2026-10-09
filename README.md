@@ -17,8 +17,9 @@ AI Task entity, text-to-speech, speech-to-text and image generation.
 - **AI Task entity** for `ai_task.generate_data`, including structured output.
   Models that support JSON schemas get the schema natively; other models are
   instructed through the prompt.
-- **Text-to-speech** with streaming audio and per-model voice selection.
-- **Speech-to-text** for Assist pipelines.
+- **Text-to-speech** that starts speaking after the first sentence. Voices,
+  audio formats and languages come from the selected Venice model.
+- **Speech-to-text** for Assist pipelines; the pipeline language is sent to Venice.
 - **Image generation** through the `venice_ai.generate_image` action.
 - **Diagnostic sensors** for request, error and token counters, updated after
   every request.
@@ -65,8 +66,8 @@ Home Assistant configuration and restart Home Assistant.
 | Strip thinking response | on | Keep `<think>` blocks out of the spoken answer. |
 | Stream responses | on | Stream answers to Assist while they are generated. |
 | Request timeout | 120 s | Timeout for every Venice AI request. |
-| TTS voice / format / speed | `tts-kokoro → bm_daniel`, mp3, 1.0 | Text-to-speech settings. |
-| STT model / format / timestamps | `nvidia/parakeet-tdt-0.6b-v3`, json, off | Speech-to-text settings. |
+| TTS voice / speed | `tts-kokoro → bm_daniel`, 1.0 | Text-to-speech model, voice and speed. |
+| STT model | `nvidia/parakeet-tdt-0.6b-v3` | Speech-to-text model. |
 | Image model | Venice default | Model used by `venice_ai.generate_image`. |
 
 Changing options reloads the entry automatically. The model lists are fetched
@@ -82,6 +83,30 @@ are removed while **Strip thinking response** is on.
 
 End-to-end encrypted (E2EE) requests are not implemented yet: E2EE-capable models
 are currently used like regular private TEE models.
+
+### Voice assistant
+
+Speech runs in the Venice cloud; nothing is downloaded to Home Assistant.
+
+Venice does not report which languages a speech model supports, so the
+integration derives them where it can. A voice pipeline only offers engines
+that support its language.
+
+- **Text-to-speech.** Kokoro voice IDs encode their language (`af_heart` is
+  English, `jf_alpha` Japanese), so Kokoro is offered for English, Spanish,
+  French, Hindi, Italian, Japanese, Portuguese and Chinese, and the voice list
+  follows the pipeline language. Other models, for example `tts-xai-v1`,
+  ElevenLabs, Gemini or MiniMax, are offered for every language and receive the
+  pipeline language as a hint. Pick one of them for languages Kokoro does not
+  speak, such as Russian.
+- **Speech-to-text.** Parakeet understands 25 European languages, including
+  Russian and Ukrainian. Whisper-based models and the other Venice models are
+  offered for every language.
+
+Audio is requested as MP3, or WAV for models without MP3; Home Assistant
+converts it for each speaker. Long answers are split at sentence boundaries,
+so the first sentence plays while the rest is still being generated, and the
+Venice limit of 4096 characters per request is never hit.
 
 ## Actions
 
