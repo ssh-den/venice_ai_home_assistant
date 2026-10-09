@@ -5,7 +5,7 @@
 > Version 2.0 differs noticeably from upstream: the client is built on the OpenAI
 > Python SDK, the conversation agent uses the Home Assistant chat log with native
 > streaming, the default model changed and the minimum Home Assistant version is
-> 2025.9. See the [changelog](CHANGELOG.md) for the full list.
+> 2025.9. See the [changelog](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/CHANGELOG.md) for the full list.
 
 Home Assistant integration for [Venice AI](https://venice.ai): a conversation agent,
 AI Task entity, text-to-speech, speech-to-text and image generation.
@@ -86,7 +86,7 @@ are currently used like regular private TEE models.
 
 ### Voice assistant
 
-Speech runs in the Venice cloud. See [docs/voice.md](docs/voice.md) for the
+Speech runs in the Venice cloud. See [docs/voice.md](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/docs/voice.md) for the
 languages of each speech model and how audio is produced.
 
 ## Actions
@@ -134,9 +134,11 @@ given. Prefer the built-in `ai_task.generate_data` action for new automations.
 | Agent does not control devices | Model without function calling, or no LLM API selected | Pick a model tagged `tools` and enable **Control Home Assistant**. |
 | Answer cut off | Max tokens too low | Increase **Max tokens**. |
 | Slow reasoning model | Model emits reasoning before answering | Enable **Disable thinking**. |
+| Venice AI TTS or STT missing from a voice pipeline | The selected speech model does not support the pipeline language | Pick a model that does, see [docs/voice.md](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/docs/voice.md). |
 
 **Download diagnostics** on the integration page gives a redacted snapshot of
-the options, coordinator state and model counts. Enable debug logging to
+the options, coordinator state, model counts and speech models missing from
+the language table. Enable debug logging to
 investigate further:
 
 ```yaml
@@ -147,8 +149,8 @@ logger:
 
 ## Development
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks.
+See [CONTRIBUTING.md](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/CONTRIBUTING.md) for setup and checks.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/LICENSE).
