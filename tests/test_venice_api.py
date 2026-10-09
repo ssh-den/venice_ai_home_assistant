@@ -1,38 +1,49 @@
-"""Tests for the ``venice_api`` service layer (ARCH-1/ARCH-2, MED-3).
-
-These are integration-style tests (TEST-2): they exercise the real service
-logic against a mocked Venice AI client, verifying request construction,
-streaming accumulation, and tool-call fragment reassembly.
-"""
+"""Tests for the chat completion helpers."""
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 
 from custom_components.venice_ai import venice_api
 from custom_components.venice_ai.venice_api import (
     ChatParameters,
-    StreamingChatResult,
+    StreamOutcome,
+    ThinkingFilter,
     VeniceConversationService,
 )
 
+from .conftest import FakeChunk
 
-class TestStreamingChatResult:
-    """Tests for the streaming-result envelope shaping."""
 
-    def test_as_message_without_tool_calls(self) -> None:
-        result = StreamingChatResult(content="hello")
-        assert result.as_message() == {"role": "assistant", "content": "hello"}
+def _feed_all(parts: list[str]) -> tuple[str, str]:
+    thinking_filter = ThinkingFilter()
+    results = [thinking_filter.feed(part) for part in parts]
+    results.append(thinking_filter.flush())
+    return "".join(a for a, _ in results), "".join(t for _, t in results)
 
-    def test_as_message_with_tool_calls(self) -> None:
-        result = StreamingChatResult(content="", tool_calls=[{"id": "1"}])
-        msg = result.as_message()
-        assert msg["tool_calls"] == [{"id": "1"}]
 
-    def test_as_response_matches_non_streaming_shape(self) -> None:
-        result = StreamingChatResult(content="hi")
-        resp = result.as_response()
-        assert resp["choices"][0]["message"]["content"] == "hi"
+@pytest.mark.parametrize(
+    ("parts", "expected"),
+    [
+        (["Hello"], ("Hello", "")),
+        (["<think>hm</think>Hi"], ("Hi", "hm")),
+        (["<th", "ink>a", "b</thi", "nk>", "ok"], ("ok", "ab")),
+        (["<THINK>x</THINK>y"], ("y", "x")),
+        (["a <", "b"], ("a <b", "")),
+        (["<think>never closed"], ("", "never closed")),
+        (["x<thi"], ("x<thi", "")),
+    ],
+)
+def test_thinking_filter(parts: list[str], expected: tuple[str, str]) -> None:
+    assert _feed_all(parts) == expected
+
+
+def test_thinking_filter_holds_back_partial_tag() -> None:
+    thinking_filter = ThinkingFilter()
+    assert thinking_filter.feed("Hi <thi") == ("Hi ", "")
+    assert thinking_filter.feed("nk>secret") == ("", "secret")
 
 
 class TestToolCallFragmentMerge:
@@ -73,7 +84,6 @@ class TestToolCallFragmentMerge:
         assert acc[1]["function"]["name"] == "b"
 
 
-@pytest.mark.asyncio
 class TestVeniceConversationService:
     """End-to-end-ish tests of the service against a mocked client."""
 
@@ -96,83 +106,90 @@ class TestVeniceConversationService:
         assert sent["top_p"] == 0.9
         assert sent["stream"] is False
 
-    async def test_chat_stream_accumulates_content(self, make_client, chunk) -> None:
+    async def test_chat_stream_yields_deltas(self, make_client) -> None:
         chunks = [
-            chunk({"content": "Hello"}),
-            chunk({"content": ", "}),
-            chunk({"content": "world"}),
+            FakeChunk([{"delta": {"reasoning_content": "hm"}}]),
+            FakeChunk([{"delta": {"content": "Hello"}}]),
+            FakeChunk([{"delta": {"content": " world"}, "finish_reason": "stop"}]),
+            FakeChunk([], usage={"total_tokens": 3}),
         ]
-        client = make_client(chunks=chunks)
-        service = VeniceConversationService(client)
+        service = VeniceConversationService(make_client(chunks=chunks))
+        outcome = StreamOutcome()
 
-        result = await service.chat_stream(
-            [{"role": "user", "content": "hi"}],
-            ChatParameters(model="venice-llm"),
-        )
+        deltas = [
+            delta
+            async for delta in service.chat_stream(
+                [{"role": "user", "content": "hi"}],
+                ChatParameters(model="venice-llm"),
+                outcome,
+            )
+        ]
 
-        assert result.content == "Hello, world"
-        assert result.tool_calls == []
+        assert deltas == [
+            {"reasoning": "hm"},
+            {"content": "Hello"},
+            {"content": " world"},
+        ]
+        assert outcome.finish_reason == "stop"
 
-    async def test_chat_stream_invokes_on_delta(self, make_client, chunk) -> None:
-        deltas: list[str] = []
-        client = make_client(chunks=[chunk({"content": "a"}), chunk({"content": "b"})])
-        service = VeniceConversationService(client)
-
-        async def collector(piece: str) -> None:
-            deltas.append(piece)
-
-        await service.chat_stream(
-            [{"role": "user", "content": "x"}],
-            ChatParameters(model="m"),
-            on_delta=collector,
-        )
-
-        assert deltas == ["a", "b"]
-
-    async def test_chat_stream_reassembles_tool_calls(self, make_client, chunk) -> None:
+    async def test_chat_stream_reassembles_tool_calls(self, make_client) -> None:
         chunks = [
-            chunk(
-                {
-                    "tool_calls": [
-                        {
-                            "index": 0,
-                            "id": "call_1",
-                            "function": {"name": "get_", "arguments": '{"x"'},
+            FakeChunk(
+                [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {"name": "get_", "arguments": '{"x"'},
+                                }
+                            ]
                         }
-                    ]
-                }
+                    }
+                ]
             ),
-            chunk(
-                {
-                    "tool_calls": [
-                        {"index": 0, "function": {"name": "time", "arguments": ":1}"}}
-                    ]
-                }
+            FakeChunk(
+                [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"name": "time", "arguments": ":1}"},
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
             ),
         ]
         client = make_client(chunks=chunks)
         service = VeniceConversationService(client)
+        outcome = StreamOutcome()
 
-        result = await service.chat_stream(
-            [{"role": "user", "content": "time?"}],
-            ChatParameters(model="m"),
-        )
+        deltas: list[dict[str, Any]] = [
+            delta
+            async for delta in service.chat_stream(
+                [{"role": "user", "content": "time?"}],
+                ChatParameters(model="m", tools=[{"type": "function"}]),
+                outcome,
+            )
+        ]
 
-        assert len(result.tool_calls) == 1
-        call = result.tool_calls[0]
-        assert call["id"] == "call_1"
-        assert call["function"]["name"] == "get_time"
-        assert call["function"]["arguments"] == '{"x":1}'
-
-    async def test_chat_stream_handles_sync_on_delta(self, make_client, chunk) -> None:
-        seen: list[str] = []
-        client = make_client(chunks=[chunk({"content": "z"})])
-        service = VeniceConversationService(client)
-
-        await service.chat_stream(
-            [{"role": "user", "content": "x"}],
-            ChatParameters(model="m"),
-            on_delta=seen.append,
-        )
-
-        assert seen == ["z"]
+        assert deltas == [
+            {
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "get_time", "arguments": '{"x":1}'},
+                    }
+                ]
+            }
+        ]
+        assert outcome.finish_reason == "tool_calls"
+        sent = client.chat.last_create_kwargs
+        assert sent["stream_options"] == {"include_usage": True}
+        assert sent["tools"] == [{"type": "function"}]

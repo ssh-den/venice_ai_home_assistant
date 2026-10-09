@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from homeassistant.components import conversation
+from homeassistant.components.conversation.const import DATA_COMPONENT
 from homeassistant.const import CONF_LLM_HASS_API
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import intent, llm
@@ -314,3 +315,139 @@ async def test_tools_sent_to_unknown_model(
 
     tools = mock_client.chat.create_non_streaming.call_args.kwargs["tools"]
     assert tools[0]["function"]["name"] == "echo"
+
+
+def _stream_from(*batches: list[FakeChunk]) -> MagicMock:
+    responses = list(batches)
+
+    @asynccontextmanager
+    async def _create(**kwargs: Any):
+        yield FakeStream(responses.pop(0))
+
+    return MagicMock(side_effect=_create)
+
+
+def _tool_chunk(call_id: str, arguments: str) -> FakeChunk:
+    return FakeChunk(
+        [
+            {
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": call_id,
+                            "type": "function",
+                            "function": {"name": "echo", "arguments": arguments},
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    "options", [{CONF_STREAM_RESPONSE: True, CONF_LLM_HASS_API: [TEST_API_ID]}]
+)
+async def test_streaming_tool_call_round_trip(
+    hass: HomeAssistant,
+    echo_tool: _EchoTool,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+) -> None:
+    mock_client.chat.create = _stream_from(
+        [_tool_chunk("call_1", '{"text": "ping"}')],
+        [FakeChunk([{"delta": {"content": "Echoed"}, "finish_reason": "stop"}])],
+    )
+    result = await _converse(hass, "Echo ping")
+
+    assert echo_tool.calls == [{"text": "ping"}]
+    assert result.response.speech["plain"]["speech"] == "Echoed"
+    second = mock_client.chat.create.call_args_list[1].kwargs["messages"]
+    assert second[-1] == {
+        "role": "tool",
+        "tool_call_id": "call_1",
+        "content": '{"echo": "ping"}',
+    }
+
+
+@pytest.mark.parametrize(
+    "options", [{CONF_STREAM_RESPONSE: True, CONF_LLM_HASS_API: [TEST_API_ID]}]
+)
+async def test_streaming_invalid_tool_arguments(
+    hass: HomeAssistant,
+    echo_tool: _EchoTool,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+) -> None:
+    mock_client.chat.create = _stream_from(
+        [_tool_chunk("call_1", "[1]")],
+        [FakeChunk([{"delta": {"content": "Sorry"}, "finish_reason": "stop"}])],
+    )
+    result = await _converse(hass, "Echo")
+
+    assert echo_tool.calls == []
+    assert result.response.speech["plain"]["speech"] == "Sorry"
+    second = mock_client.chat.create.call_args_list[1].kwargs["messages"]
+    assert second[-1]["role"] == "tool"
+    assert "JSON object" in second[-1]["content"]
+
+
+@pytest.mark.parametrize(
+    ("options", "chunks", "expected"),
+    [
+        (
+            {CONF_STREAM_RESPONSE: True},
+            [FakeChunk([{"delta": {}, "finish_reason": "length"}])],
+            "cut off",
+        ),
+        (
+            {CONF_STREAM_RESPONSE: True},
+            [FakeChunk([{"delta": {}, "finish_reason": "stop"}])],
+            "didn't receive",
+        ),
+        (
+            {CONF_STREAM_RESPONSE: True, CONF_STRIP_THINKING_RESPONSE: True},
+            [FakeChunk([{"delta": {"content": "<think>only this</think>"}}])],
+            "only this",
+        ),
+    ],
+)
+async def test_streaming_fallbacks(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+    chunks: list[FakeChunk],
+    expected: str,
+) -> None:
+    mock_client.chat.create = _stream_from(chunks)
+    result = await _converse(hass, "Hi")
+    assert expected in result.response.speech["plain"]["speech"]
+
+
+@pytest.mark.parametrize("options", [{CONF_STREAM_RESPONSE: True}])
+async def test_streaming_reasoning_is_not_spoken(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    mock_client.chat.create = _stream_from(
+        [
+            FakeChunk([{"delta": {"reasoning_content": "thinking..."}}]),
+            FakeChunk([{"delta": {"content": "Answer"}, "finish_reason": "stop"}]),
+        ]
+    )
+    result = await _converse(hass, "Hi")
+    assert result.response.speech["plain"]["speech"] == "Answer"
+
+
+@pytest.mark.parametrize("options", [{CONF_STREAM_RESPONSE: True}])
+async def test_supports_streaming_follows_option(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    entity = hass.data[DATA_COMPONENT].get_entity("conversation.venice_ai")
+    assert entity is not None
+    assert entity.supports_streaming
+    hass.config_entries.async_update_entry(
+        setup_integration, options={CONF_STREAM_RESPONSE: False}
+    )
+    assert not entity.supports_streaming
