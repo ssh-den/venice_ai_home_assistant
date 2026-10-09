@@ -41,7 +41,7 @@ Venice does not report the languages of its speech models, so
 changes a TTS or STT model, which the integration logs and shows in the
 diagnostics, add its languages from the vendor's documentation, note the source
 next to the entry and say whether the model takes the language as a code or a
-name.
+name. Update the tables in `docs/voice.md` to match.
 
 ## Releases
 
