@@ -34,6 +34,15 @@ All of them must pass before a change is merged. New behaviour needs tests.
 - Comments only where the code cannot speak for itself.
 - Never log the API key.
 
+## Speech model languages
+
+Venice does not report the languages of its speech models, so
+`custom_components/venice_ai/languages.py` lists them. When Venice adds or
+changes a TTS or STT model, which the integration logs and shows in the
+diagnostics, add its languages from the vendor's documentation, note the source
+next to the entry and say whether the model takes the language as a code or a
+name.
+
 ## Releases
 
 1. Describe the changes in `CHANGELOG.md`.

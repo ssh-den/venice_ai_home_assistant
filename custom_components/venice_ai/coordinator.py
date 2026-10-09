@@ -16,6 +16,7 @@ from .client import (
     VeniceAIError,
 )
 from .const import UPDATE_INTERVAL
+from .languages import unlisted_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,6 +66,15 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         if not any(data.values()):
             raise UpdateFailed(
                 "All Venice AI data fetches failed; coordinator has no data to return."
+            )
+        if unlisted := unlisted_models(
+            (m.get("id", "") for m in data["tts_models"]),
+            (m.get("id", "") for m in data["asr_models"]),
+        ):
+            _LOGGER.info(
+                "Languages of these Venice speech models are unknown, so they are "
+                "offered for every language: %s",
+                ", ".join(unlisted),
             )
         return data
 

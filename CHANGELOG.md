@@ -7,10 +7,11 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 ## [2.1.0] — 2026-10-09
 
 ### Added
-- Speech languages follow the selected models: Kokoro voices are grouped by
-  their language, Parakeet offers its European languages, and other models are
-  offered for every language. The pipeline language is sent to Venice for both
-  text-to-speech and speech-to-text.
+- Languages of every Venice speech model, compiled from the vendors'
+  documentation into one table. Voice pipelines only offer the models that speak
+  their language, Kokoro voices follow the pipeline language, and the language
+  is sent to Venice as a code or a name, as each model expects. Speech models
+  missing from the table are reported in the log and the diagnostics.
 - Text-to-speech synthesizes streamed answers sentence by sentence, so the first
   sentence plays while the model is still answering. Long texts are split to
   stay within the Venice limit of 4096 characters per request.

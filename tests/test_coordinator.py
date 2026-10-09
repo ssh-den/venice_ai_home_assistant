@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -70,3 +71,12 @@ async def test_no_data_fails_update(
     )
     with pytest.raises(UpdateFailed, match="All Venice AI data fetches failed"):
         await VeniceAIDataUpdateCoordinator(hass, mock_client)._async_update_data()
+
+
+async def test_logs_unlisted_speech_models(
+    hass: HomeAssistant, mock_client: MagicMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    await VeniceAIDataUpdateCoordinator(hass, mock_client)._async_update_data()
+    assert "tts-wav-only" in caplog.text
+    assert "tts-kokoro" not in caplog.text

@@ -30,7 +30,8 @@ from .const import (
     RECOMMENDED_TTS_VOICE,
 )
 from .entity import device_info
-from .models import MULTILINGUAL, TTSModel, get_tts_model, primary_language
+from .languages import MULTILINGUAL, tts_language_hint
+from .models import TTSModel, get_tts_model
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class _Request:
     voice: str
     speed: float
     audio_format: str
-    language: str
+    language: str | None
 
 
 class VeniceAITTS(TextToSpeechEntity):
@@ -113,7 +114,7 @@ class VeniceAITTS(TextToSpeechEntity):
             voice=settings[ATTR_VOICE],
             speed=float(settings[CONF_TTS_SPEED]),
             audio_format=model.audio_format if model else "mp3",
-            language=primary_language(language),
+            language=tts_language_hint(model_id, language),
         )
 
     async def _synthesize(self, request: _Request, text: str) -> bytes:

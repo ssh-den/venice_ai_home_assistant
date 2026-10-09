@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import pytest
 
+from custom_components.venice_ai.languages import MULTILINGUAL
 from custom_components.venice_ai.models import (
-    MULTILINGUAL,
     ModelInfo,
     TTSModel,
     find_model,
     parse_models,
     parse_tts_models,
-    primary_language,
-    stt_languages,
 )
 
 TEE_MODEL = {
@@ -120,11 +118,3 @@ def test_parse_tts_models() -> None:
         "spec": ("a",),
         "legacy": ("b",),
     }
-
-
-def test_languages_helpers() -> None:
-    assert primary_language("en-US") == "en"
-    assert primary_language("pt_BR") == "pt"
-    assert "ru" in stt_languages("nvidia/parakeet-tdt-0.6b-v3")
-    assert "ja" not in stt_languages("nvidia/parakeet-tdt-0.6b-v3")
-    assert stt_languages("unknown") == list(MULTILINGUAL)

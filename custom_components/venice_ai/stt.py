@@ -14,7 +14,7 @@ from .audio import pcm_to_wav
 from .client import VeniceAIError
 from .const import CONF_STT_MODEL, MAX_STT_BUFFER_SIZE, RECOMMENDED_STT_MODEL
 from .entity import device_info
-from .models import primary_language, stt_languages
+from .languages import primary_language, stt_languages
 
 _LOGGER = logging.getLogger(__name__)
 

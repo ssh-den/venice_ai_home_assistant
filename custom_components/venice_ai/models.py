@@ -4,60 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-import re
 from typing import TYPE_CHECKING, Any
+
+from .languages import tts_languages, tts_voices
 
 if TYPE_CHECKING:
     from . import VeniceAIConfigEntry
-
-# Venice does not report languages, so multilingual models advertise the
-# ISO 639-1 languages Whisper understands and receive the language as a hint.
-MULTILINGUAL = (
-    "af", "am", "ar", "as", "az", "ba", "be", "bg", "bn", "bo", "br", "bs", "ca",
-    "cs", "cy", "da", "de", "el", "en", "es", "et", "eu", "fa", "fi", "fo", "fr",
-    "gl", "gu", "ha", "he", "hi", "hr", "ht", "hu", "hy", "id", "is", "it", "ja",
-    "jv", "ka", "kk", "km", "kn", "ko", "la", "lb", "ln", "lo", "lt", "lv", "mg",
-    "mi", "mk", "ml", "mn", "mr", "ms", "mt", "my", "nb", "ne", "nl", "nn", "oc",
-    "pa", "pl", "ps", "pt", "ro", "ru", "sa", "sd", "si", "sk", "sl", "sn", "so",
-    "sq", "sr", "su", "sv", "sw", "ta", "te", "tg", "th", "tk", "tl", "tr", "tt",
-    "uk", "ur", "uz", "vi", "yi", "yo", "zh",
-)  # fmt: skip
-
-_PARAKEET_V3 = (
-    "bg", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hr", "hu", "it",
-    "lt", "lv", "mt", "nl", "pl", "pt", "ro", "ru", "sk", "sl", "sv", "uk",
-)  # fmt: skip
-
-_STT_LANGUAGES = {"nvidia/parakeet-tdt-0.6b-v3": _PARAKEET_V3}
-
-# Kokoro voice IDs start with a language letter and a gender letter, e.g. jf_alpha.
-_KOKORO_VOICE = re.compile(r"^([a-z])[fm]_")
-_KOKORO_LANGUAGES = {
-    "a": "en",
-    "b": "en",
-    "e": "es",
-    "f": "fr",
-    "h": "hi",
-    "i": "it",
-    "j": "ja",
-    "p": "pt",
-    "z": "zh",
-}
-
-
-def primary_language(language: str) -> str:
-    """Return the ISO 639-1 part of a language tag such as en-US."""
-    return re.split(r"[-_]", language, maxsplit=1)[0].lower()
-
-
-def stt_languages(model_id: str) -> list[str]:
-    """Return the languages a speech-to-text model understands."""
-    return list(_STT_LANGUAGES.get(model_id, MULTILINGUAL))
-
-
-def _voice_language(voice: str) -> str | None:
-    match = _KOKORO_VOICE.match(voice)
-    return _KOKORO_LANGUAGES.get(match.group(1)) if match else None
 
 
 def _strings(value: Any) -> tuple[str, ...]:
@@ -158,11 +110,8 @@ class TTSModel:
 
     @property
     def languages(self) -> list[str]:
-        """Languages the model speaks, derived from Kokoro-style voice IDs."""
-        languages = {_voice_language(voice) for voice in self.voices}
-        if not self.voices or None in languages:
-            return list(MULTILINGUAL)
-        return sorted(lang for lang in languages if lang)
+        """Languages the model speaks with its voices."""
+        return tts_languages(self.id, self.voices)
 
     @property
     def audio_format(self) -> str:
@@ -174,9 +123,7 @@ class TTSModel:
 
     def voices_for(self, language: str) -> list[str]:
         """Return the voices suitable for a language."""
-        lang = primary_language(language)
-        matching = [v for v in self.voices if _voice_language(v) in (lang, None)]
-        return matching or list(self.voices)
+        return tts_voices(self.id, self.voices, language)
 
 
 def parse_models(models: Iterable[Any]) -> dict[str, ModelInfo]:

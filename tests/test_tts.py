@@ -54,7 +54,7 @@ async def test_get_tts_audio_uses_entry_options(
         model=RECOMMENDED_TTS_MODEL,
         audio_output="mp3",
         speed=1.5,
-        language="en",
+        language=None,
     )
 
 
@@ -107,7 +107,7 @@ async def test_stream_tts_audio_by_sentence(
     async def _stream(**kwargs: object) -> AsyncGenerator[bytes]:
         texts.append(str(kwargs["text"]))
         assert kwargs["voice"] == "bm_daniel"
-        assert kwargs["language"] == "en"
+        assert kwargs["language"] is None
         yield f"<{len(texts)}>".encode()
 
     mock_client.speech.generate_streaming = _stream
@@ -189,3 +189,24 @@ async def test_default_options(
     options = entity.default_options
     assert options[ATTR_VOICE]
     assert options[CONF_TTS_MODEL] == RECOMMENDED_TTS_MODEL
+
+
+@pytest.mark.parametrize(
+    ("model", "language", "hint"),
+    [
+        ("tts-xai-v1", "ru", "ru"),
+        ("tts-qwen3-1-7b", "ru-RU", "Russian"),
+        ("tts-gemini-3-1-flash", "ru", None),
+    ],
+)
+async def test_language_hint_follows_model(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+    model: str,
+    language: str,
+    hint: str | None,
+) -> None:
+    mock_client.speech.generate = AsyncMock(return_value=b"audio")
+    await _entity(hass).async_get_tts_audio("Привет", language, {CONF_TTS_MODEL: model})
+    assert mock_client.speech.generate.call_args.kwargs["language"] == hint

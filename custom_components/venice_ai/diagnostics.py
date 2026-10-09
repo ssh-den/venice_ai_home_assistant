@@ -10,6 +10,8 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import HomeAssistant
 
+from .languages import unlisted_models
+
 # Fields redacted in full by async_redact_data (tokens, passwords, etc.).
 # NOTE: "api_key" is intentionally excluded here — it is handled separately
 # below to show the last 4 characters, which lets users identify which key
@@ -86,6 +88,10 @@ async def async_get_config_entry_diagnostics(
                 else None
             ),
             **{f"{key}_count": len(models) for key, models in coordinator_data.items()},
+            "unlisted_speech_models": unlisted_models(
+                (m.get("id", "") for m in coordinator_data.get("tts_models", [])),
+                (m.get("id", "") for m in coordinator_data.get("asr_models", [])),
+            ),
         }
     else:
         diagnostics["coordinator"] = None
