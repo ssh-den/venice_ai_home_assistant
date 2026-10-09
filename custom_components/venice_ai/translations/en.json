@@ -18,11 +18,9 @@
     "error": {
       "invalid_auth": "Invalid API key",
       "cannot_connect": "Failed to connect to Venice AI",
-      "unknown": "Unexpected error",
-      "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable."
+      "unknown": "Unexpected error"
     },
     "abort": {
-      "already_configured": "Venice AI is already configured",
       "reauth_successful": "Re-authentication was successful"
     }
   },
@@ -74,8 +72,6 @@
       }
     },
     "error": {
-      "invalid_tts_voice_for_model": "The selected voice entry is invalid. Please select a valid 'Model → Voice' entry from the list.",
-      "invalid_llm_api": "The selected Home Assistant control option is not available. Please choose a valid option or leave blank to disable.",
       "invalid_auth": "Invalid API key",
       "missing_api_key": "The config entry has no API key. Please re-authenticate.",
       "unknown": "Unexpected error",
@@ -194,10 +190,6 @@
           "description": "Expected response structure or schema"
         }
       }
-    },
-    "conversation": {
-      "name": "VeniceAI Conversation",
-      "description": "Conversation agent"
     }
   }
 }

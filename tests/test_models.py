@@ -13,7 +13,6 @@ TEE_MODEL = {
         "capabilities": {
             "supportsFunctionCalling": True,
             "supportsResponseSchema": True,
-            "supportsReasoning": True,
             "supportsTeeAttestation": True,
             "supportsE2EE": False,
         },
@@ -30,7 +29,6 @@ def test_from_api() -> None:
         privacy="private",
         supports_function_calling=True,
         supports_response_schema=True,
-        supports_reasoning=True,
         supports_tee=True,
         supports_e2ee=False,
         input_price=0.5,

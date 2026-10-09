@@ -26,7 +26,6 @@ class ModelInfo:
     privacy: str | None = None
     supports_function_calling: bool = False
     supports_response_schema: bool = False
-    supports_reasoning: bool = False
     supports_tee: bool = False
     supports_e2ee: bool = False
     input_price: float | None = None
@@ -50,7 +49,6 @@ class ModelInfo:
             privacy=privacy if isinstance(privacy, str) else None,
             supports_function_calling=caps.get("supportsFunctionCalling") is True,
             supports_response_schema=caps.get("supportsResponseSchema") is True,
-            supports_reasoning=caps.get("supportsReasoning") is True,
             supports_tee=caps.get("supportsTeeAttestation") is True,
             supports_e2ee=caps.get("supportsE2EE") is True,
             input_price=_price(pricing, "input"),
