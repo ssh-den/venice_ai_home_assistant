@@ -1,17 +1,42 @@
 name: Validate
 
 on:
-  push: 
-  pull_request:
-  schedule:
-    - cron: "0 0 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  validate-hacs:
-    runs-on: "ubuntu-latest"
+  hacs:
+    runs-on: ubuntu-latest
     steps:
       - name: HACS validation
-        uses: "hacs/action@main"
+        uses: hacs/action@main
         with:
-          category: "integration"
+          category: integration
+
+  hassfest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install dependencies
+        run: uv sync
+      - name: Tests
+        run: uv run pytest
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run black --check .
+          uv run pylint custom_components tests
+      - name: Type checks
+        run: |
+          uv run mypy
+          uv run pyright
