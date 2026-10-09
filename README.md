@@ -89,6 +89,13 @@ are currently used like regular private TEE models.
 Speech runs in the Venice cloud. See [docs/voice.md](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/docs/voice.md) for the
 languages of each speech model and how audio is produced.
 
+### Privacy
+
+Conversations, voice commands and the states of exposed entities are processed
+by Venice AI. See [docs/privacy.md](https://github.com/ssh-den/venice_ai_home_assistant/blob/main/docs/privacy.md) for what is sent,
+the privacy levels of Venice models and links to the Venice privacy policy and
+terms of service.
+
 ## Actions
 
 ### `venice_ai.generate_image`
