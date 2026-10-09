@@ -9,20 +9,10 @@ from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.entity import Entity
 
-from .const import DOMAIN
+from .const import DOMAIN, SUBENTRY_MODELS
 
 if TYPE_CHECKING:
     from . import VeniceAIConfigEntry
-
-
-def device_info(entry: ConfigEntry) -> dr.DeviceInfo:
-    """Return the service device of the config entry, for its usage sensors."""
-    return dr.DeviceInfo(
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=entry.title,
-        manufacturer="Venice AI",
-        entry_type=dr.DeviceEntryType.SERVICE,
-    )
 
 
 def subentries_of(entry: ConfigEntry, subentry_type: str) -> Iterator[ConfigSubentry]:
@@ -30,26 +20,33 @@ def subentries_of(entry: ConfigEntry, subentry_type: str) -> Iterator[ConfigSube
     return (s for s in entry.subentries.values() if s.subentry_type == subentry_type)
 
 
+def service_device_info(subentry: ConfigSubentry) -> dr.DeviceInfo:
+    """Return the service device of a subentry."""
+    key, default = SUBENTRY_MODELS[subentry.subentry_type]
+    return dr.DeviceInfo(
+        identifiers={(DOMAIN, subentry.subentry_id)},
+        name=subentry.title,
+        manufacturer="Venice AI",
+        model=str(subentry.data.get(key, default)),
+        entry_type=dr.DeviceEntryType.SERVICE,
+    )
+
+
 class VeniceAIEntity(Entity):
-    """An entity of one subentry, on a service device of its own."""
+    """The entity of one subentry, on its service device."""
 
     _attr_has_entity_name = True
     _attr_name = None
 
-    def __init__(
-        self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry, model: str
-    ) -> None:
+    def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
         self.entry = entry
         self.subentry = subentry
-        self._attr_unique_id = subentry.subentry_id
-        self._attr_device_info = dr.DeviceInfo(
-            identifiers={(DOMAIN, subentry.subentry_id)},
-            name=subentry.title,
-            manufacturer="Venice AI",
-            model=model,
-            entry_type=dr.DeviceEntryType.SERVICE,
+        self.client = entry.runtime_data.client.scoped(
+            entry.runtime_data.metrics[subentry.subentry_id]
         )
+        self._attr_unique_id = subentry.subentry_id
+        self._attr_device_info = service_device_info(subentry)
 
     @property
     def options(self) -> Mapping[str, Any]:

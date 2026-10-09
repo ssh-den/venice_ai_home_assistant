@@ -1,10 +1,4 @@
-"""Diagnostic sensors for Venice AI usage metrics.
-
-Exposes per-config-entry usage telemetry — request counts, error counts, and
-token consumption — as diagnostic sensor entities so users can monitor API
-usage without enabling debug logging. The counters are sourced from the
-``VeniceAIMetrics`` instance carried on the shared API client.
-"""
+"""Diagnostic sensors with the API usage of each Venice AI service."""
 
 from __future__ import annotations
 
@@ -17,16 +11,17 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .client import VeniceAIMetrics
-from .entity import device_info
+from .const import SUBENTRY_AI_TASK, SUBENTRY_CONVERSATION
+from .entity import service_device_info
 
 if TYPE_CHECKING:
-    from . import VeniceAIRuntimeData
+    from . import VeniceAIConfigEntry
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,6 +29,7 @@ class VeniceAISensorDescription(SensorEntityDescription):
     """Describes a Venice AI diagnostic sensor."""
 
     value_fn: Callable[[VeniceAIMetrics], int | str | None]
+    tokens: bool = False
 
 
 SENSORS: tuple[VeniceAISensorDescription, ...] = (
@@ -61,6 +57,7 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda m: m.total_tokens,
+        tokens=True,
     ),
     VeniceAISensorDescription(
         key="prompt_tokens",
@@ -70,6 +67,7 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda m: m.prompt_tokens,
+        tokens=True,
     ),
     VeniceAISensorDescription(
         key="completion_tokens",
@@ -79,6 +77,7 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
         state_class=SensorStateClass.TOTAL_INCREASING,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda m: m.completion_tokens,
+        tokens=True,
     ),
     VeniceAISensorDescription(
         key="last_error",
@@ -92,14 +91,21 @@ SENSORS: tuple[VeniceAISensorDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: VeniceAIConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Venice AI diagnostic sensors from a config entry."""
-    runtime_data: VeniceAIRuntimeData = entry.runtime_data
-    async_add_entities(
-        VeniceAIUsageSensor(entry, runtime_data, description) for description in SENSORS
-    )
+    """Set up the usage sensors of each service."""
+    for subentry in entry.subentries.values():
+        metrics = entry.runtime_data.metrics[subentry.subentry_id]
+        async_add_entities(
+            (
+                VeniceAIUsageSensor(subentry, metrics, description)
+                for description in SENSORS
+                if not description.tokens
+                or subentry.subentry_type in (SUBENTRY_CONVERSATION, SUBENTRY_AI_TASK)
+            ),
+            config_subentry_id=subentry.subentry_id,
+        )
 
 
 class VeniceAIUsageSensor(SensorEntity):
@@ -111,15 +117,15 @@ class VeniceAIUsageSensor(SensorEntity):
 
     def __init__(
         self,
-        entry: ConfigEntry,
-        runtime_data: VeniceAIRuntimeData,
+        subentry: ConfigSubentry,
+        metrics: VeniceAIMetrics,
         description: VeniceAISensorDescription,
     ) -> None:
         """Initialize the usage sensor."""
         self.entity_description = description
-        self._metrics = runtime_data.client.metrics
-        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = device_info(entry)
+        self._metrics = metrics
+        self._attr_unique_id = f"{subentry.subentry_id}_{description.key}"
+        self._attr_device_info = service_device_info(subentry)
 
     async def async_added_to_hass(self) -> None:
         """Push state updates whenever the metrics change."""

@@ -57,10 +57,8 @@ class VeniceAITaskEntity(ai_task.AITaskEntity, VeniceAIEntity):
 
     def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
-        super().__init__(
-            entry, subentry, subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-        )
-        self._service = VeniceConversationService(entry.runtime_data.client)
+        super().__init__(entry, subentry)
+        self._service = VeniceConversationService(self.client)
 
     async def _async_generate_data(
         self,

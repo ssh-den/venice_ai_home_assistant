@@ -42,9 +42,7 @@ class VeniceAISTT(stt.SpeechToTextEntity, VeniceAIEntity):
 
     def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize Venice AI STT."""
-        super().__init__(
-            entry, subentry, subentry.data.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
-        )
+        super().__init__(entry, subentry)
 
     @property
     def _model(self) -> str:
@@ -107,7 +105,7 @@ class VeniceAISTT(stt.SpeechToTextEntity, VeniceAIEntity):
             return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
 
         try:
-            text = await self.entry.runtime_data.client.transcriptions.create(
+            text = await self.client.transcriptions.create(
                 audio_data=pcm_to_wav(bytes(audio)),
                 model=self._model,
                 language=primary_language(metadata.language),

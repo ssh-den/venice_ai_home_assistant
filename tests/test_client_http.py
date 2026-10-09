@@ -103,6 +103,22 @@ async def test_http_error_is_categorized_and_recorded() -> None:
     assert client.metrics.error_count == 1
 
 
+async def test_scoped_client_records_into_its_metrics() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "nope"})
+
+    client = _make_client(handler)
+    metrics = VeniceAIMetrics()
+    scoped = client.scoped(metrics)
+    assert scoped.sdk is client.sdk
+    with pytest.raises(AuthenticationError):
+        await scoped.chat.create_non_streaming(model="m", messages=[])
+    with pytest.raises(AuthenticationError):
+        await scoped.transcriptions.create(b"", "m")
+    assert (metrics.request_count, metrics.error_count) == (2, 2)
+    assert client.metrics.request_count == 0
+
+
 async def test_server_error_after_retries() -> None:
     attempts: list[int] = []
 

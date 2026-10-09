@@ -94,7 +94,14 @@ from .const import (
     SUBENTRY_TTS,
 )
 from .languages import voice_language
-from .models import TTSModel, is_private, parse_models, parse_tts_models, privacy_label
+from .models import (
+    TTSModel,
+    is_private,
+    parse_models,
+    parse_tts_models,
+    privacy_label,
+    speech_price_label,
+)
 
 if TYPE_CHECKING:
     from . import VeniceAIConfigEntry
@@ -153,14 +160,20 @@ def _model_label(model: Mapping[str, Any]) -> str:
     spec = model.get("model_spec")
     name = spec.get("name") if isinstance(spec, Mapping) else None
     details = ", ".join(
-        part for part in (str(model["id"]), privacy_label(model)) if part
+        part
+        for part in (str(model["id"]), privacy_label(model), speech_price_label(model))
+        if part
     )
     return f"{name} ({details})" if name else details
 
 
 def _tts_model_label(model: TTSModel) -> str:
     count = len(model.languages)
-    details = [model.privacy, f"{count} language{'s' if count != 1 else ''}"]
+    details = [
+        model.privacy,
+        f"{count} language{'s' if count != 1 else ''}",
+        model.price,
+    ]
     return f"{model.id} ({', '.join(d for d in details if d)})"
 
 
@@ -179,7 +192,7 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Venice AI."""
 
     VERSION = 2
-    MINOR_VERSION = 1
+    MINOR_VERSION = 2
 
     async def _async_validate(self, api_key: str) -> str | None:
         """Return the error key for an API key, or None if it works."""

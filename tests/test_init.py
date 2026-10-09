@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er, issue_registry as ir
+from homeassistant.helpers import (
+    device_registry as dr,
+    entity_registry as er,
+    issue_registry as ir,
+)
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.venice_ai.client import AuthenticationError, NetworkError
@@ -28,7 +32,7 @@ from custom_components.venice_ai.const import (
     SUBENTRY_TTS,
 )
 
-from .conftest import SCHEMA_MODEL, SUBENTRY_IDS, update_subentry
+from .conftest import SCHEMA_MODEL, SUBENTRY_IDS, add_entry, update_subentry
 
 
 async def test_setup_and_unload(
@@ -95,7 +99,7 @@ async def test_entity_unique_ids_are_stable(
     subentry_of = {entity.unique_id: entity.config_subentry_id for entity in entities}
     for subentry_id in SUBENTRY_IDS.values():
         assert subentry_of[subentry_id] == subentry_id
-    assert subentry_of[f"{entry_id}_request_count"] is None
+        assert subentry_of[f"{subentry_id}_request_count"] == subentry_id
 
 
 async def test_migrate_options_to_subentries(
@@ -117,23 +121,33 @@ async def test_migrate_options_to_subentries(
     )
     entry.add_to_hass(hass)
     registry = er.async_get(hass)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, entry.entry_id)}
+    )
     old = {
         platform: registry.async_get_or_create(
-            platform, DOMAIN, f"{entry.entry_id}_{suffix}", config_entry=entry
+            platform,
+            DOMAIN,
+            f"{entry.entry_id}_{suffix}",
+            config_entry=entry,
+            device_id=device.id,
         ).entity_id
         for platform, suffix in (
             ("conversation", "conversation"),
             ("ai_task", "task"),
             ("tts", "tts"),
             ("stt", "stt"),
+            ("sensor", "request_count"),
         )
     }
 
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    assert entry.version == 2
+    assert (entry.version, entry.minor_version) == (2, 2)
     assert entry.options == {CONF_REQUEST_TIMEOUT: 30}
+    assert dr.async_get(hass).async_get(device.id) is None
+    assert registry.async_get(old["sensor"]) is None
     subentries = {s.subentry_type: s for s in entry.subentries.values()}
     assert subentries[SUBENTRY_CONVERSATION].data == {
         CONF_PROMPT: "Be brief",
@@ -161,7 +175,33 @@ async def test_migrate_options_to_subentries(
         subentry_id = subentries[subentry_type].subentry_id
         assert moved.unique_id == subentry_id
         assert moved.config_subentry_id == subentry_id
+        assert moved.device_id is not None
+        assert moved.device_id != device.id
         assert hass.states.get(old[platform]) is not None
+
+
+async def test_migrate_removes_entry_device(
+    hass: HomeAssistant, ha_core: None, mock_client: MagicMock
+) -> None:
+    entry = add_entry(hass)
+    hass.config_entries.async_update_entry(entry, minor_version=1)
+    device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, entry.entry_id)}
+    )
+    sensor = er.async_get(hass).async_get_or_create(
+        "sensor",
+        DOMAIN,
+        f"{entry.entry_id}_request_count",
+        config_entry=entry,
+        device_id=device.id,
+    )
+
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert entry.minor_version == 2
+    assert dr.async_get(hass).async_get(device.id) is None
+    assert er.async_get(hass).async_get(sensor.entity_id) is None
 
 
 async def test_model_issues_follow_the_model_list(

@@ -21,8 +21,8 @@ AI Task entity, text-to-speech, speech-to-text and image generation.
   audio formats and languages come from the selected Venice model.
 - **Speech-to-text** for Assist pipelines; the pipeline language is sent to Venice.
 - **Image generation** through the `venice_ai.generate_image` action.
-- **Diagnostic sensors** for request, error and token counters, updated after
-  every request.
+- **Diagnostic sensors** for the requests, errors and tokens of each service,
+  updated after every request.
 - **Repair issues** when the API key is rejected, Venice is unreachable or rate
   limited, or a configured model is no longer offered.
 - **Services like the built-in integrations**: the conversation agent, AI Task,
@@ -96,11 +96,12 @@ Returns the image `url`, plus `revised_prompt` when Venice provides one.
 
 ## Entities
 
-Each service is a device with one entity, named after the service, for example
+Each service is a device named after the service, for example
 `conversation.venice_ai_conversation`, `ai_task.venice_ai_task`,
-`tts.venice_ai_tts` and `stt.venice_ai_stt`. The entry device holds the
-diagnostic sensors: request count, error count, total, prompt and completion
-tokens, last error.
+`tts.venice_ai_tts` and `stt.venice_ai_stt`. Its diagnostic sensors count the
+requests and errors of that service and show its last error; conversation agents
+and AI Tasks also count prompt, completion and total tokens. Image generation
+and the model list refresh are not counted.
 
 ## Troubleshooting
 

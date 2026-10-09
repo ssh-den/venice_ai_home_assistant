@@ -13,6 +13,7 @@ from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, Platform
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import (
     config_validation as cv,
+    device_registry as dr,
     entity_registry as er,
     issue_registry as ir,
 )
@@ -20,7 +21,12 @@ from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.typing import ConfigType
 
-from .client import AsyncVeniceAIClient, AuthenticationError, RateLimitError
+from .client import (
+    AsyncVeniceAIClient,
+    AuthenticationError,
+    RateLimitError,
+    VeniceAIMetrics,
+)
 from .const import (
     CONF_CHAT_MODEL,
     CONF_DISABLE_THINKING,
@@ -51,12 +57,11 @@ from .const import (
     RECOMMENDED_IMAGE_MODEL,
     RECOMMENDED_PRIVATE_MODELS_ONLY,
     RECOMMENDED_REQUEST_TIMEOUT,
-    RECOMMENDED_STT_MODEL,
     RECOMMENDED_STT_OPTIONS,
-    RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_OPTIONS,
     SUBENTRY_AI_TASK,
     SUBENTRY_CONVERSATION,
+    SUBENTRY_MODELS,
     SUBENTRY_STT,
     SUBENTRY_TTS,
 )
@@ -82,12 +87,12 @@ _ISSUE_AUTH = "auth_failure_{entry_id}"
 _ISSUE_API_DOWN = "api_unavailable_{entry_id}"
 _ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
 
-# Model option, default and coordinator model list of each subentry type
-_SUBENTRY_MODELS = {
-    SUBENTRY_CONVERSATION: (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL, "text_models"),
-    SUBENTRY_AI_TASK: (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL, "text_models"),
-    SUBENTRY_TTS: (CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL, "tts_models"),
-    SUBENTRY_STT: (CONF_STT_MODEL, RECOMMENDED_STT_MODEL, "asr_models"),
+# Coordinator model list of each subentry type
+_MODEL_LISTS = {
+    SUBENTRY_CONVERSATION: "text_models",
+    SUBENTRY_AI_TASK: "text_models",
+    SUBENTRY_TTS: "tts_models",
+    SUBENTRY_STT: "asr_models",
 }
 
 
@@ -97,6 +102,7 @@ class VeniceAIRuntimeData:
 
     client: AsyncVeniceAIClient
     coordinator: VeniceAIDataUpdateCoordinator
+    metrics: dict[str, VeniceAIMetrics]
 
 
 type VeniceAIConfigEntry = ConfigEntry[VeniceAIRuntimeData]
@@ -186,10 +192,14 @@ def _async_check_models(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None
         CONF_PRIVATE_MODELS_ONLY, RECOMMENDED_PRIVATE_MODELS_ONLY
     )
     targets = [
-        (subentry.subentry_id, subentry.title, subentry.data.get(key, default), kind)
+        (
+            subentry.subentry_id,
+            subentry.title,
+            subentry.data.get(key, default),
+            _MODEL_LISTS[subentry.subentry_type],
+        )
         for subentry in entry.subentries.values()
-        if subentry.subentry_type in _SUBENTRY_MODELS
-        for key, default, kind in [_SUBENTRY_MODELS[subentry.subentry_type]]
+        for key, default in [SUBENTRY_MODELS[subentry.subentry_type]]
     ]
     image_model = entry.options.get(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
     if image_model != RECOMMENDED_IMAGE_MODEL:
@@ -264,6 +274,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     entry.runtime_data = VeniceAIRuntimeData(
         client=client,
         coordinator=coordinator,
+        metrics={subentry_id: VeniceAIMetrics() for subentry_id in entry.subentries},
     )
 
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
@@ -296,6 +307,8 @@ async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -
 
     if entry.version == 1:
         _migrate_to_subentries(hass, entry)
+    if entry.minor_version < 2:
+        _remove_entry_device(hass, entry)
     return True
 
 
@@ -378,6 +391,7 @@ def _migrate_to_subentries(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> N
             entity_registry.async_update_entity(
                 entity_id,
                 config_subentry_id=subentry.subentry_id,
+                device_id=None,
                 new_unique_id=subentry.subentry_id,
             )
     hass.config_entries.async_update_entry(
@@ -386,6 +400,15 @@ def _migrate_to_subentries(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> N
         version=2,
         minor_version=1,
     )
+
+
+def _remove_entry_device(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None:
+    """Remove the device of the entry with its usage sensors, now on each service."""
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    if device is not None:
+        device_registry.async_remove_device(device.id)
+    hass.config_entries.async_update_entry(entry, minor_version=2)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:

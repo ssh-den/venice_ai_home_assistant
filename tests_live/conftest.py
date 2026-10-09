@@ -71,7 +71,7 @@ async def live_entry(hass: HomeAssistant) -> AsyncGenerator[MockConfigEntry]:
         title=DEFAULT_NAME,
         data={CONF_API_KEY: API_KEY},
         version=2,
-        minor_version=1,
+        minor_version=2,
         subentries_data=[
             ConfigSubentryData(
                 subentry_type=subentry_type,

@@ -48,14 +48,15 @@ The same model, sampling and reasoning settings as the conversation agent, plus:
 
 ## Text-to-speech
 
-The first step picks the model, labeled with its privacy level and the number of
-languages it speaks; the second step picks one of its voices and the speed.
+The first step picks the model, labeled with its privacy level, the number of
+languages it speaks and its price per million characters; the second step picks one of its voices and the speed.
 Kokoro voices show their language. [voice.md](voice.md) lists the languages of
 every model.
 
 ## Speech-to-text
 
-One setting: the model, labeled with its privacy level.
+One setting: the model, labeled with its privacy level and its price per minute
+of audio.
 
 ## Model lists
 

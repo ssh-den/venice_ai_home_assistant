@@ -114,6 +114,14 @@ RECOMMENDED_TTS_OPTIONS: dict[str, Any] = {
 }
 RECOMMENDED_STT_OPTIONS: dict[str, Any] = {CONF_STT_MODEL: RECOMMENDED_STT_MODEL}
 
+# Model option and its default of each subentry type
+SUBENTRY_MODELS: dict[str, tuple[str, str]] = {
+    SUBENTRY_CONVERSATION: (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+    SUBENTRY_AI_TASK: (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
+    SUBENTRY_TTS: (CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
+    SUBENTRY_STT: (CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
+}
+
 # Maximum audio buffer size for STT to prevent memory spikes (10 MB).
 # Venice AI does not support chunked/streaming STT uploads; the entire audio
 # payload must be buffered before submission. Recordings exceeding this limit

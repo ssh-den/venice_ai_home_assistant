@@ -66,10 +66,7 @@ class VeniceAITTS(TextToSpeechEntity, VeniceAIEntity):
 
     def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize TTS entity."""
-        super().__init__(
-            entry, subentry, subentry.data.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
-        )
-        self._client = entry.runtime_data.client
+        super().__init__(entry, subentry)
         self._attr_supported_options = [ATTR_VOICE, CONF_TTS_MODEL, CONF_TTS_SPEED]
 
     def _model(self, model_id: str | None = None) -> TTSModel | None:
@@ -120,7 +117,7 @@ class VeniceAITTS(TextToSpeechEntity, VeniceAIEntity):
         )
 
     async def _synthesize(self, request: _Request, text: str) -> bytes:
-        return await self._client.speech.generate(
+        return await self.client.speech.generate(
             text=text,
             voice=request.voice,
             model=request.model,
@@ -161,7 +158,7 @@ class VeniceAITTS(TextToSpeechEntity, VeniceAIEntity):
             if joiner is not None:
                 yield joiner.add(await self._synthesize(request, text))
                 continue
-            async for chunk in self._client.speech.generate_streaming(
+            async for chunk in self.client.speech.generate_streaming(
                 text=text,
                 voice=request.voice,
                 model=request.model,

@@ -48,6 +48,18 @@ def privacy_label(data: Mapping[str, Any]) -> str | None:
     return privacy.capitalize() if isinstance(privacy, str) and privacy else None
 
 
+def speech_price_label(data: Mapping[str, Any]) -> str | None:
+    """Return the price of a speech model, for display."""
+    pricing = _spec(data).get("pricing")
+    if not isinstance(pricing, Mapping):
+        return None
+    if (price := _price(pricing, "input")) is not None:
+        return f"${price:g} per 1M chars"
+    if (price := _price(pricing, "per_audio_second")) is not None:
+        return f"${price * 60:.2g} per min"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ModelInfo:
     """Parsed description of a single chat model."""
@@ -112,6 +124,7 @@ class TTSModel:
     formats: tuple[str, ...] = ()
     default_format: str | None = None
     privacy: str | None = None
+    price: str | None = None
 
     @classmethod
     def from_api(cls, data: Mapping[str, Any]) -> TTSModel:
@@ -124,6 +137,7 @@ class TTSModel:
             formats=_strings(spec.get("supported_formats")),
             default_format=default_format if isinstance(default_format, str) else None,
             privacy=privacy_label(data),
+            price=speech_price_label(data),
         )
 
     @property

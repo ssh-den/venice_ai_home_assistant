@@ -236,7 +236,7 @@ async def test_tts_model_then_voice(
     result = await _start(hass, setup_integration, SUBENTRY_TTS)
     _assert_translated(result, STRINGS["config_subentries"][SUBENTRY_TTS])
     labels = _options(result, CONF_TTS_MODEL)
-    assert labels[RECOMMENDED_TTS_MODEL] == "tts-kokoro (Private, 2 languages)"
+    assert labels[RECOMMENDED_TTS_MODEL] == "tts-kokoro (Private, 2 languages, $3.5 per 1M chars)"
     assert WAV_TTS_MODEL in labels
     assert "voice" not in str(labels)
 
@@ -274,7 +274,7 @@ async def test_stt_model(
     result = await _start(hass, setup_integration, SUBENTRY_STT, new=True)
     _assert_translated(result, STRINGS["config_subentries"][SUBENTRY_STT])
     assert _options(result, CONF_STT_MODEL) == {
-        RECOMMENDED_STT_MODEL: f"Parakeet ASR ({RECOMMENDED_STT_MODEL}, Private)"
+        RECOMMENDED_STT_MODEL: f"Parakeet ASR ({RECOMMENDED_STT_MODEL}, Private, $0.006 per min)"
     }
     result = await hass.config_entries.subentries.async_configure(
         result["flow_id"],

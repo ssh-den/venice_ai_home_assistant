@@ -93,6 +93,7 @@ MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
                 "voices": ["bm_daniel", "af_heart", "jf_alpha"],
                 "supported_formats": ["mp3", "wav"],
                 "privacy": "private",
+                "pricing": {"input": {"usd": 3.5}},
             },
         },
         {
@@ -105,7 +106,11 @@ MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
         {
             "id": RECOMMENDED_STT_MODEL,
             "type": "asr",
-            "model_spec": {"name": "Parakeet ASR", "privacy": "private"},
+            "model_spec": {
+                "name": "Parakeet ASR",
+                "privacy": "private",
+                "pricing": {"per_audio_second": {"usd": 0.0001}},
+            },
         }
     ],
     "image": [
@@ -137,7 +142,7 @@ def add_entry(
         data={CONF_API_KEY: "test-key"},
         options={},
         version=2,
-        minor_version=1,
+        minor_version=2,
         subentries_data=[
             ConfigSubentryDataWithId(
                 subentry_id=subentry_id,
@@ -164,6 +169,7 @@ def mock_client() -> Generator[MagicMock]:
     """Patch the Venice AI client used by the integration."""
     client = MagicMock()
     client.metrics = VeniceAIMetrics()
+    client.scoped.return_value = client
     client.close = AsyncMock()
     client.validate_api_key = AsyncMock()
 

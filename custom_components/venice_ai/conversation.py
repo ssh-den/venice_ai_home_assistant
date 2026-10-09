@@ -199,10 +199,8 @@ class VeniceAIConversationEntity(conversation.ConversationEntity, VeniceAIEntity
 
     def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
-        super().__init__(
-            entry, subentry, subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
-        )
-        self._service = VeniceConversationService(entry.runtime_data.client)
+        super().__init__(entry, subentry)
+        self._service = VeniceConversationService(self.client)
         if subentry.data.get(CONF_LLM_HASS_API):
             self._attr_supported_features = (
                 conversation.ConversationEntityFeature.CONTROL

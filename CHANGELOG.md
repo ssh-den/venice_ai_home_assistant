@@ -4,6 +4,17 @@ All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [3.1.0] — 2026-10-09
+
+### Changed
+- Usage sensors move from the entry device to each service and count only its
+  requests. Token sensors exist only for conversation agents and AI Tasks. The
+  entry device and its sensors are removed on the first start, so automations
+  that use them need the sensors of a service instead. Image generation and
+  the model list refresh are no longer counted.
+- Text-to-speech model labels show the price per million characters, and
+  speech-to-text model labels the price per minute of audio.
+
 ## [3.0.0] — 2026-10-09
 
 The conversation agent, AI Task, text-to-speech and speech-to-text are now
@@ -227,6 +238,7 @@ fork and differs noticeably from upstream.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
+[3.1.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v3.1.0
 [3.0.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v3.0.0
 [2.1.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.1.0
 [2.0.1]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.0.1

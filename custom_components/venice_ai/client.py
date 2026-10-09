@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+import copy
 from dataclasses import dataclass, field
 import logging
 import time
@@ -413,6 +414,16 @@ class AsyncVeniceAIClient:
         self.speech = Speech(self)
         self.transcriptions = Transcriptions(self)
         self.images = Images(self)
+
+    def scoped(self, metrics: VeniceAIMetrics) -> AsyncVeniceAIClient:
+        """Return a client on the same connection that records into ``metrics``."""
+        client = copy.copy(self)
+        client.metrics = metrics
+        client.chat = ChatCompletions(client)
+        client.speech = Speech(client)
+        client.transcriptions = Transcriptions(client)
+        client.images = Images(client)
+        return client
 
     async def call(self, context: str, request: Any) -> Any:
         """Await an SDK request, recording metrics and converting errors."""
