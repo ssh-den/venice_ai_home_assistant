@@ -28,7 +28,7 @@
     "step": {
       "init": {
         "title": "Venice AI Options",
-        "description": "Configure Venice AI settings. Only models with function calling support are shown.",
+        "description": "Configure Venice AI settings. Models tagged with tools can control Home Assistant.",
         "data": {
           "chat_model": "AI Model",
           "prompt": "System Prompt",
@@ -85,10 +85,6 @@
     }
   },
   "issues": {
-    "deprecated_model": {
-      "title": "Deprecated Venice AI model",
-      "description": "The model {model} is deprecated. Consider switching to {replacement}."
-    },
     "unavailable_model": {
       "title": "Unavailable Venice AI {model_type} model",
       "description": "The model {model} is no longer available from Venice AI. Please update your integration settings to select a supported model."

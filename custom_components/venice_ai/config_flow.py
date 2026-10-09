@@ -69,7 +69,7 @@ from .const import (
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
 )
-from .models import parse_models
+from .models import model_voices, parse_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -234,21 +234,7 @@ def _extract_tts_model_info(models: list[dict[str, Any]]) -> dict[str, _TTSModel
         if not isinstance(model_id, str) or not model_id:
             continue
 
-        voices: list[str] = []
-
-        # Primary source: model_spec.voices (observed live API shape).
-        raw_spec = model.get("model_spec")
-        model_spec: dict[str, Any] = raw_spec if isinstance(raw_spec, dict) else {}
-        spec_voices = model_spec.get("voices")
-        if isinstance(spec_voices, list):
-            voices = [str(v) for v in spec_voices if isinstance(v, str) and v]
-
-        # Fallback: legacy voice_models field used by earlier implementations.
-        if not voices:
-            voice_models = model.get("voice_models")
-            if isinstance(voice_models, list):
-                voices = [str(v) for v in voice_models if isinstance(v, str) and v]
-
+        voices = model_voices(model)
         if not voices:
             continue
 

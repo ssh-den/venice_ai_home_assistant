@@ -12,18 +12,17 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .client import (
     AsyncVeniceAIClient,
     AuthenticationError,
-    NetworkError,
     RateLimitError,
-    ServiceUnavailableError,
     VeniceAIError,
 )
 from .const import UPDATE_INTERVAL
+from .models import model_voices
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class VeniceAICoordinatorData(TypedDict):
-    """Typed schema for Venice AI coordinator data (Architecture 7.2)."""
+    """Models and voices fetched from Venice AI."""
 
     text_models: list[dict[str, Any]]
     audio_models: list[dict[str, Any]]
@@ -68,116 +67,35 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         except VeniceAIError as err:
             raise UpdateFailed(f"Venice AI is unavailable: {err}") from err
 
-        try:
-            text_models = await self.client.models.list(model_type="text")
-            if isinstance(text_models, list):
-                data["text_models"] = text_models
-                _LOGGER.debug("Coordinator fetched %d text models", len(text_models))
-        except AuthenticationError as err:
-            _LOGGER.error("Authentication error fetching text models: %s", err)
-            raise UpdateFailed(f"Authentication failed: {err}") from err
-        except RateLimitError as err:
-            _LOGGER.warning("Rate limit exceeded fetching text models: %s", err)
-            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
-        except ServiceUnavailableError as err:
-            _LOGGER.warning(
-                "Venice AI service unavailable fetching text models: %s", err
-            )
-        except NetworkError as err:
-            _LOGGER.warning("Network error fetching text models: %s", err)
-        except VeniceAIError as err:
-            _LOGGER.warning("Venice AI error fetching text models: %s", err)
-        except Exception:
-            _LOGGER.exception("Unexpected error fetching text models")
+        data["text_models"] = await self._async_fetch_models("text")
+        tts_models = await self._async_fetch_models("tts")
+        asr_models = await self._async_fetch_models("asr")
+        data["image_models"] = await self._async_fetch_models("image")
+        for model_type, models in (("tts", tts_models), ("asr", asr_models)):
+            for model in models:
+                model["model_type"] = model_type
+            data["audio_models"].extend(models)
+        for model in tts_models:
+            for voice in model_voices(model):
+                if voice not in data["voices"]:
+                    data["voices"].append(voice)
 
-        try:
-            tts_models = await self.client.models.list(model_type="tts")
-            if isinstance(tts_models, list):
-                for m in tts_models:
-                    m["model_type"] = "tts"
-                data["audio_models"].extend(tts_models)
-                _LOGGER.debug("Coordinator fetched %d TTS models", len(tts_models))
-                # Extract voices from TTS model metadata.
-                # Venice AI returns voices under model_spec.voices (current API shape).
-                # Older/fallback responses may use the legacy voice_models field.
-                for model in tts_models:
-                    voices_found: list[str] = []
-
-                    # Primary source: model_spec.voices
-                    raw_spec = model.get("model_spec")
-                    if isinstance(raw_spec, dict):
-                        spec_voices = raw_spec.get("voices")
-                        if isinstance(spec_voices, list):
-                            voices_found = [
-                                v for v in spec_voices if isinstance(v, str) and v
-                            ]
-
-                    # Fallback: legacy voice_models field
-                    if not voices_found:
-                        voice_models = model.get("voice_models", [])
-                        if isinstance(voice_models, list):
-                            voices_found = [
-                                v for v in voice_models if isinstance(v, str) and v
-                            ]
-
-                    for vid in voices_found:
-                        if vid not in data["voices"]:
-                            data["voices"].append(vid)
-        except AuthenticationError as err:
-            _LOGGER.error("Authentication error fetching TTS models: %s", err)
-            raise UpdateFailed(f"Authentication failed: {err}") from err
-        except RateLimitError as err:
-            _LOGGER.warning("Rate limit exceeded fetching TTS models: %s", err)
-            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
-        except ServiceUnavailableError as err:
-            _LOGGER.warning(
-                "Venice AI service unavailable fetching TTS models: %s", err
-            )
-        except NetworkError as err:
-            _LOGGER.warning("Network error fetching TTS models: %s", err)
-        except VeniceAIError as err:
-            _LOGGER.warning("Venice AI error fetching TTS models: %s", err)
-        except Exception:
-            _LOGGER.exception("Unexpected error fetching TTS models")
-
-        try:
-            asr_models = await self.client.models.list(model_type="asr")
-            if isinstance(asr_models, list):
-                for m in asr_models:
-                    m["model_type"] = "asr"
-                data["audio_models"].extend(asr_models)
-                _LOGGER.debug("Coordinator fetched %d ASR models", len(asr_models))
-        except AuthenticationError as err:
-            _LOGGER.error("Authentication error fetching ASR models: %s", err)
-            raise UpdateFailed(f"Authentication failed: {err}") from err
-        except RateLimitError as err:
-            _LOGGER.warning("Rate limit exceeded fetching ASR models: %s", err)
-            raise UpdateFailed(f"Rate limit exceeded: {err}") from err
-        except ServiceUnavailableError as err:
-            _LOGGER.warning(
-                "Venice AI service unavailable fetching ASR models: %s", err
-            )
-        except NetworkError as err:
-            _LOGGER.warning("Network error fetching ASR models: %s", err)
-        except VeniceAIError as err:
-            _LOGGER.warning("Venice AI error fetching ASR models: %s", err)
-        except Exception:
-            _LOGGER.exception("Unexpected error fetching ASR models")
-
-        try:
-            data["image_models"] = await self.client.models.list(model_type="image")
-        except AuthenticationError as err:
-            raise UpdateFailed(f"Authentication failed: {err}") from err
-        except VeniceAIError as err:
-            _LOGGER.warning("Venice AI error fetching image models: %s", err)
-
-        # MED-1: If every fetch failed and we have no data at all, surface the
-        # failure to the coordinator so HA can apply back-off, show the entity
-        # as unavailable, and fire repair issues.  Partial failures (e.g. only
-        # ASR models missing) are tolerated so other platforms keep working.
+        # Partial failures are tolerated so the other platforms keep working.
         if not data["text_models"] and not data["audio_models"] and not data["voices"]:
             raise UpdateFailed(
                 "All Venice AI data fetches failed; coordinator has no data to return."
             )
 
         return data
+
+    async def _async_fetch_models(self, model_type: str) -> list[dict[str, Any]]:
+        """Fetch one model category, tolerating transient failures."""
+        try:
+            models = await self.client.models.list(model_type=model_type)
+        except (AuthenticationError, RateLimitError) as err:
+            raise UpdateFailed(f"Fetching {model_type} models failed: {err}") from err
+        except VeniceAIError as err:
+            _LOGGER.warning("Failed to fetch %s models: %s", model_type, err)
+            return []
+        _LOGGER.debug("Fetched %d %s models", len(models), model_type)
+        return models

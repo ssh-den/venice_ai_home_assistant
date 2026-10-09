@@ -89,6 +89,17 @@ def find_model(models: Iterable[Any] | None, model_id: str) -> ModelInfo | None:
     return parse_models(models or []).get(model_id)
 
 
+def model_voices(model: Mapping[str, Any]) -> list[str]:
+    """Return the voices of a TTS model from /models metadata."""
+    spec = model.get("model_spec")
+    voices = spec.get("voices") if isinstance(spec, Mapping) else None
+    if not isinstance(voices, list) or not voices:
+        voices = model.get("voice_models")
+    if not isinstance(voices, list):
+        return []
+    return [v for v in voices if isinstance(v, str) and v]
+
+
 def get_chat_model_info(entry: VeniceAIConfigEntry, model_id: str) -> ModelInfo | None:
     """Return the capabilities of a chat model known to the coordinator."""
     data = entry.runtime_data.coordinator.data

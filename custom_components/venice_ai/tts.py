@@ -34,6 +34,7 @@ from .const import (
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
 )
+from .models import model_voices
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -199,28 +200,13 @@ class VeniceAITTS(TextToSpeechEntity):
             CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL
         )
 
-        # Find the active model in the coordinator's audio_models list and
-        # extract its voices using the same dual-source logic as coordinator.py.
-        audio_models: list[dict] = coordinator.data.get("audio_models", [])
-        for model in audio_models:
-            if not isinstance(model, dict):
-                continue
-            if model.get("id") != active_model:
-                continue
-            # Primary source: model_spec.voices
-            raw_spec = model.get("model_spec")
-            if isinstance(raw_spec, dict):
-                spec_voices = raw_spec.get("voices")
-                if isinstance(spec_voices, list):
-                    voices = [v for v in spec_voices if isinstance(v, str) and v]
-                    if voices:
-                        return [Voice(v, v) for v in voices]
-            # Fallback: legacy voice_models field
-            legacy = model.get("voice_models", [])
-            if isinstance(legacy, list):
-                voices = [v for v in legacy if isinstance(v, str) and v]
-                if voices:
-                    return [Voice(v, v) for v in voices]
+        for model in coordinator.data.get("audio_models", []):
+            if (
+                isinstance(model, dict)
+                and model.get("id") == active_model
+                and (voices := model_voices(model))
+            ):
+                return [Voice(v, v) for v in voices]
 
         # Active model not found in cache — fall back to all known voices so
         # the dropdown is never completely empty.

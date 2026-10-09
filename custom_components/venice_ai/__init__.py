@@ -9,18 +9,12 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv, issue_registry as ir
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.typing import ConfigType
 
-from .client import (
-    AsyncVeniceAIClient,
-    AuthenticationError,
-    RateLimitError,
-    VeniceAIError,
-)
+from .client import AsyncVeniceAIClient, AuthenticationError, RateLimitError
 from .const import (
     CONF_CHAT_MODEL,
     CONF_REQUEST_TIMEOUT,
@@ -47,14 +41,10 @@ PLATFORMS = [
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-_ISSUE_DEPRECATED = "deprecated_model_{entry_id}_{model_key}"
 _ISSUE_UNAVAIL = "unavailable_model_{entry_id}_{model_key}"
 _ISSUE_AUTH = "auth_failure_{entry_id}"
 _ISSUE_API_DOWN = "api_unavailable_{entry_id}"
 _ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
-
-# Deprecated model IDs mapped to their recommended replacements.
-_DEPRECATED_MODELS: dict[str, str] = {}
 
 
 @dataclass
@@ -108,9 +98,6 @@ def _async_on_coordinator_update(
         _LOGGER.warning(
             "Coordinator auth failure for entry %s — repair issue created", entry_id
         )
-        # CRIT-1: programmatically start the reauth flow so HA opens the
-        # re-authentication dialog without requiring the user to manually
-        # locate and act on the repair issue.
         entry.async_start_reauth(hass)
     elif isinstance(cause, RateLimitError):
         ir.async_create_issue(
@@ -189,28 +176,6 @@ async def _async_create_model_issues(hass: HomeAssistant, entry: ConfigEntry) ->
     }
 
     for model_key, (current_model, available_set) in configured_models.items():
-        if current_model in _DEPRECATED_MODELS:
-            issue_id = _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=model_key)
-            ir.async_create_issue(
-                hass,
-                DOMAIN,
-                issue_id,
-                is_fixable=False,
-                is_persistent=False,
-                severity=IssueSeverity.WARNING,
-                translation_key="deprecated_model",
-                translation_placeholders={
-                    "model": current_model,
-                    "replacement": _DEPRECATED_MODELS[current_model],
-                },
-            )
-            _LOGGER.debug(
-                "Created repair issue for deprecated model %s in entry %s",
-                current_model,
-                entry_id,
-            )
-            continue
-
         if available_set and current_model not in available_set:
             issue_id = _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=model_key)
             ir.async_create_issue(
@@ -252,9 +217,6 @@ async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
     entry_id = entry.entry_id
     registry = ir.async_get(hass)
     issues = [
-        _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=CONF_CHAT_MODEL),
-        _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=CONF_TTS_MODEL),
-        _ISSUE_DEPRECATED.format(entry_id=entry_id, model_key=CONF_STT_MODEL),
         _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_CHAT_MODEL),
         _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_TTS_MODEL),
         _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_STT_MODEL),
@@ -278,13 +240,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
         ),
     )
 
-    try:
-        await client.validate_api_key()
-    except AuthenticationError as err:
-        raise ConfigEntryAuthFailed("Invalid API key") from err
-    except VeniceAIError as err:
-        raise ConfigEntryNotReady(err) from err
-
     coordinator = VeniceAIDataUpdateCoordinator(hass, client)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = VeniceAIRuntimeData(
@@ -292,24 +247,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
         coordinator=coordinator,
     )
 
-    # NOTE: No manual add_update_listener is needed here.  VeniceAIOptionsFlow
-    # subclasses OptionsFlowWithReload (HA ≥ 2024.1) which automatically
-    # triggers an integration reload when the user saves options.
-
     _LOGGER.info("Forwarding entry setups to platforms: %s", PLATFORMS)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _LOGGER.info("Successfully forwarded entry setups")
 
     await async_setup_repairs(hass, entry)
     return True
-
-
-# NOTE: async_reload_entry is intentionally NOT defined.
-# VeniceAIOptionsFlow subclasses OptionsFlowWithReload (HA ≥ 2024.1) which
-# automatically triggers an integration reload when the user saves options.
-# Defining async_reload_entry would register it as an update listener,
-# which conflicts with OptionsFlowWithReload and raises:
-#   ValueError: Config entry update listeners should not be used with OptionsFlowWithReload
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
@@ -330,19 +273,10 @@ async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
-    """Unload Venice AI.
-
-    Explicitly awaits client.close() after platforms are unloaded.
-    Previously client.close was registered via entry.async_on_unload,
-    but async_on_unload accepts only sync callables — an async close()
-    would be called and its coroutine discarded, leaking the httpx
-    session. By awaiting close() here we guarantee the client is shut
-    down cleanly (CRIT-2 fix).
-    """
+    """Unload Venice AI."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     await async_unload_repairs(hass, entry)
 
-    # Explicitly close the async client — async_on_unload cannot await coroutines.
     client: AsyncVeniceAIClient = entry.runtime_data.client
     await client.close()
 

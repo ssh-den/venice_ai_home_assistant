@@ -32,7 +32,6 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Fix 2: Moved out of async_process_audio_stream to avoid re-creating on every call.
 # Each tuple is (metadata_attr_name, property_name, human_label).
 _STT_VALIDATION_ATTRS = [
     ("format", "supported_formats", "audio format"),

@@ -68,7 +68,6 @@ async def async_get_config_entry_diagnostics(
         "homeassistant_version": HA_VERSION,
     }
 
-    # Coordinator state (MIN-9 fix)
     if coordinator is not None:
         last_exception = None
         if coordinator.last_exception is not None:

@@ -1,4 +1,4 @@
-"""Diagnostic sensors for Venice AI usage metrics (LOW-4).
+"""Diagnostic sensors for Venice AI usage metrics.
 
 Exposes per-config-entry usage telemetry — request counts, error counts, and
 token consumption — as diagnostic sensor entities so users can monitor API

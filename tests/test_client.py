@@ -1,6 +1,6 @@
-"""Unit tests for ``client.py`` pure logic (TEST-1).
+"""Unit tests for ``client.py`` pure logic.
 
-Covers the telemetry counters backing the diagnostic sensors (LOW-4) and the
+Covers the telemetry counters backing the diagnostic sensors and the
 centralised HTTP error categorization that gives every API method consistent,
 typed exceptions.
 """
@@ -87,7 +87,7 @@ class TestErrorCategorization:
 
 
 class TestSanitizeHeaderValue:
-    """Tests for ``_sanitize_header_value`` (SEC-1).
+    """Tests for ``_sanitize_header_value``.
 
     Regression guard: commit 64b115c implemented this helper with a
     ``.strip()`` + ``ord(ch) >= 0x20`` filter, which silently mutated
@@ -117,7 +117,7 @@ class TestSanitizeHeaderValue:
         assert client._sanitize_header_value(key) == "  sk-AbCdEfGh1234567890  "
 
     def test_internal_tab_preserved(self) -> None:
-        # Tabs inside a credential are unusual but the SEC-1 contract is
+        # Tabs inside a credential are unusual but the contract is
         # "remove only CR/LF" — we must not silently edit other bytes.
         key = "sk-\tabc"
         assert client._sanitize_header_value(key) == "sk-\tabc"

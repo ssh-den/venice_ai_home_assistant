@@ -30,9 +30,7 @@ CONF_DISABLE_THINKING = "disable_thinking"
 # as complex reasoning is rarely needed for standard Home Assistant actions.
 RECOMMENDED_DISABLE_THINKING = True
 
-# MED-3: Opt-in streaming for conversation responses. When enabled, the
-# conversation entity consumes the Venice AI streaming chat API via the
-# VeniceConversationService and accumulates deltas (including tool calls).
+# Stream conversation answers to Home Assistant as they are generated
 CONF_STREAM_RESPONSE = "stream_response"
 RECOMMENDED_STREAM_RESPONSE = True
 
