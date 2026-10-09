@@ -15,12 +15,15 @@ AI Task entity, text-to-speech, speech-to-text and image generation.
 - **Conversation agent** that can control Home Assistant through the Assist API,
   with answers streamed to Assist as they are generated.
 - **AI Task entity** for `ai_task.generate_data`, including structured output.
-  Models that support JSON schemas get it natively; other models are instructed
-  through the prompt.
+  Models that support JSON schemas get the schema natively; other models are
+  instructed through the prompt.
 - **Text-to-speech** with streaming audio and per-model voice selection.
 - **Speech-to-text** for Assist pipelines.
 - **Image generation** through the `venice_ai.generate_image` action.
-- **Diagnostic sensors** for request, error and token counters.
+- **Diagnostic sensors** for request, error and token counters, updated after
+  every request.
+- **Repair issues** when the API key is rejected, Venice is unreachable or rate
+  limited, or a configured model is no longer offered.
 - **Model capabilities from Venice**: the model selector shows privacy (E2EE, TEE,
   private or anonymized), tool support and price per million tokens. Tools are
   not sent to models without function calling.
@@ -48,13 +51,14 @@ Home Assistant configuration and restart Home Assistant.
 
 1. Go to **Settings → Devices & services → Add integration** and pick **Venice AI**.
 2. Enter your API key. It is checked against Venice before the entry is created.
+   If the key is later revoked, Home Assistant asks for a new one.
 3. Open **Configure** on the integration to adjust the options.
 
 | Option | Default | Description |
 | --- | --- | --- |
 | AI model | `e2ee-deepseek-v4-flash` | Chat model for the conversation agent and AI Task. |
 | System prompt | built-in | Instructions sent with every conversation. |
-| Control Home Assistant | off | LLM APIs (for example Assist) the agent may use. |
+| Control Home Assistant | off, the form suggests Assist | LLM APIs the agent may use. |
 | Temperature / Top P / Max tokens | 1.0 / 1.0 / 512 | Sampling and answer length. |
 | Max tool iterations | 5 | Model calls allowed per turn while using tools. |
 | Disable thinking | on | Ask reasoning models to skip reasoning. |
@@ -65,14 +69,16 @@ Home Assistant configuration and restart Home Assistant.
 | STT model / format / timestamps | `nvidia/parakeet-tdt-0.6b-v3`, json, off | Speech-to-text settings. |
 | Image model | Venice default | Model used by `venice_ai.generate_image`. |
 
-Changing options reloads the entry automatically.
+Changing options reloads the entry automatically. The model lists are fetched
+live when the options open, and refreshed in the background every 12 hours.
 
 ### Choosing a model
 
 The default `e2ee-deepseek-v4-flash` is an inexpensive model that runs in a
 trusted execution environment and supports function calling. Pick a model tagged
 `tools` if the agent should control your home. Reasoning output from the model is
-kept as thinking content and is not spoken.
+kept as thinking content and is not spoken; `<think>` blocks in the answer
+are removed while **Strip thinking response** is on.
 
 End-to-end encrypted (E2EE) requests are not implemented yet: E2EE-capable models
 are currently used like regular private TEE models.
@@ -85,7 +91,7 @@ are currently used like regular private TEE models.
 | --- | --- | --- |
 | `config_entry` | yes | Venice AI entry to use. |
 | `prompt` | yes | Image description. |
-| `model` | no | Image model, defaults to the configured one. |
+| `model` | no | Image model, defaults to the configured one. Must be offered by Venice. |
 | `size` | no | `auto`, `256x256` … `1792x1024`, default `1024x1024`. |
 | `quality` | no | `auto`, `low`, `medium`, `high`, `standard` or `hd`. |
 | `style` | no | `vivid` or `natural`. |
@@ -100,8 +106,8 @@ Returns the image `url`, plus `revised_prompt` when Venice provides one.
 | `task` | yes | Instructions for the model. |
 | `structure` | no | Description of the JSON structure to return. |
 
-Returns `conversation_id` and `data`. Prefer the built-in `ai_task.generate_data`
-action for new automations.
+Returns `conversation_id` and `data`; `data` is parsed JSON when `structure` is
+given. Prefer the built-in `ai_task.generate_data` action for new automations.
 
 ## Entities
 
@@ -123,7 +129,9 @@ action for new automations.
 | Answer cut off | Max tokens too low | Increase **Max tokens**. |
 | Slow reasoning model | Model emits reasoning before answering | Enable **Disable thinking**. |
 
-Enable debug logging to investigate problems:
+**Download diagnostics** on the integration page gives a redacted snapshot of
+the options, coordinator state and model counts. Enable debug logging to
+investigate further:
 
 ```yaml
 logger:
@@ -133,13 +141,7 @@ logger:
 
 ## Development
 
-```bash
-uv sync
-```
-
-```bash
-.venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pyright && .venv/bin/pylint custom_components tests
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks.
 
 ## License
 

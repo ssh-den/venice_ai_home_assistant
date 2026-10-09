@@ -46,6 +46,9 @@ fork and differs noticeably from upstream.
 - Unused and non-working `todo.py` and `task_types.py` modules. They were never
   loaded as a platform, so no entities disappear.
 - Translations for errors, aborts and services that were never used.
+- The deprecated model repair issue, which had no models to report.
+- Repeated API key validation during setup; the first coordinator refresh
+  already checks it.
 
 ### Fixed
 - The `ai_task` action failed on every call.
@@ -55,6 +58,10 @@ fork and differs noticeably from upstream.
 - `request_timeout` was ignored by most requests.
 - Select options lost their values in the options flow.
 - Downgraded config entries were accepted by the migration.
+- AI Task structures built from selectors, as sent by `ai_task.generate_data`,
+  could not be converted to a JSON schema.
+- **Strip thinking response** was off for entries that had never saved options,
+  although the options form showed it as on.
 
 ## [1.0.0] — upstream
 

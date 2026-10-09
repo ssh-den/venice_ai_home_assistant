@@ -1,142 +1,69 @@
-﻿# Contributing to Venice AI Conversation
+# Contributing
 
-Thanks for your interest in improving **Venice AI Conversation**! This
-document explains how to set up a development environment, run the
-test suite, and submit changes.
+## Setup
 
-## Code of Conduct
-
-This project follows the [Home Assistant Community
-Forums](https://community.home-assistant.io/) code of conduct: be
-respectful, be inclusive, focus on the technical merit of ideas, and
-assume good faith.
-
-## Setting up
-
-### Prerequisites
-
-- Python **3.12** (matches the `python_version` declared in
-  `hacs.json`).
-- A Linux/macOS/Windows shell with `git`, `pip`, and `pytest`.
-- An isolated virtual environment is strongly recommended.
-
-### Clone and install
+Python 3.13 and [uv](https://docs.astral.sh/uv/) are required.
 
 ```bash
-git clone https://github.com/grasponcrypto/venice_ai.git
-cd venice_ai
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -U pip pytest pytest-asyncio
+git clone https://github.com/ssh-den/venice_ai_home_assistant.git
+cd venice_ai_home_assistant
+uv sync
 ```
 
-The integration targets Home Assistant; the test suite is designed to
-run **without** HA installed (helpers are AST-extracted where
-needed). If you want to load the integration inside a development HA
-install, copy `custom_components/venice_ai/` into your HA
-`config/custom_components/` directory.
+To try the integration in a development Home Assistant, copy
+`custom_components/venice_ai` into its `config/custom_components` directory.
 
-## Running the tests
+## Checks
+
+Tests run against a real Home Assistant instance through
+`pytest-homeassistant-custom-component`; the Venice client is mocked, so no API
+key or network access is needed.
 
 ```bash
-python -m pytest tests/ -v
+.venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pyright && .venv/bin/pylint custom_components tests
 ```
 
-The current suite has **41 tests** across `test_client.py`,
-`test_venice_api.py`, and `test_schema.py`. All tests should pass on
-a fresh checkout. The whole run takes well under a second on modern
-hardware.
-
-### Adding tests
-
-- Place new tests under `tests/` using the `test_*.py` naming
-  convention.
-- If you need to test code that imports Home Assistant, either
-  AST-extract the pure helper (see `tests/test_schema.py` for the
-  pattern) or guard the import with a fixture in `tests/conftest.py`.
-- Avoid network calls in tests — use the `FakeChatCompletions`
-  fixture for streaming responses and patch `httpx.AsyncClient` for
-  HTTP-level tests.
+All of them must pass before a change is merged. New behaviour needs tests.
 
 ## Project layout
 
 ```
-venice_ai/
-├── custom_components/venice_ai/
-│   ├── __init__.py        # Setup, services, migrations
-│   ├── client.py          # AsyncVeniceAIClient + retries + metrics
-│   ├── venice_api.py      # VeniceConversationService (chat, tools)
-│   ├── conversation.py    # HA conversation agent
-│   ├── ai_task.py         # AI Task entity
-│   ├── tts.py             # TTS entity
-│   ├── stt.py             # STT entity
-│   ├── sensor.py          # Coordinator + token/last-error sensor
-│   ├── config_flow.py     # User/options/reauth flows
-│   ├── coordinator.py     # DataUpdateCoordinator wrapper
-│   ├── diagnostics.py     # Diagnostics export (redacted)
-│   └── const.py           # Constants, defaults, version table
-├── tests/
-│   ├── conftest.py        # FakeChatCompletions, fixtures
-│   ├── test_client.py
-│   ├── test_venice_api.py
-│   └── test_schema.py
-├── hacs.json              # HACS metadata
-├── pytest.ini             # Pytest configuration
-└── README.md
+custom_components/venice_ai/
+├── __init__.py      # Setup, unload, migration, repair issues
+├── client.py        # OpenAI SDK facade, error mapping, usage metrics
+├── coordinator.py   # Periodic refresh of models and voices
+├── models.py        # Model capabilities from /models
+├── venice_api.py    # Chat requests, streaming, <think> filtering
+├── conversation.py  # Conversation agent
+├── ai_task.py       # AI Task entity
+├── tts.py / stt.py  # Speech platforms
+├── sensor.py        # Diagnostic usage sensors
+├── services.py      # generate_image and ai_task actions
+├── config_flow.py   # User, reauth and options flows
+└── diagnostics.py   # Redacted diagnostics
 ```
 
-## Style guidelines
+## Style
 
-- **Type hints everywhere.** Public functions and methods take and
-  return annotated types.
-- **Docstrings** describe intent, parameters, return value, and any
-  raised exceptions. Use the existing module-level docstrings as a
-  template.
-- **Constants live in `const.py`** when they need to be tunable.
-  Don't bury magic numbers in service code.
-- **Voluptuous schemas** in `config_flow.py` define the user-facing
-  options surface; runtime validation belongs in the entity that
-  consumes the values.
-- **Logging** uses the per-module `_LOGGER = logging.getLogger(__name__)`.
-  Never log the API key, full prompts, or raw tool output.
+- Type hints everywhere; the code must stay clean under mypy and pyright.
+- Constants and defaults live in `const.py`.
+- `strings.json` and `translations/en.json` are kept identical.
+- Comments only where the code cannot speak for itself.
+- Never log the API key.
 
-## Submitting changes
+## Releases
 
-1. **Fork** the repository and create a topic branch
-   (`git checkout -b fix/something`).
-2. Make focused commits with messages in the form
-   `area(scope): short summary`. Examples:
-   - `client(retry): cap backoff at RETRY_MAX_DELAY`
-   - `docs(readme): add troubleshooting section`
-3. Run `python -m pytest tests/ -v` and ensure all tests pass.
-4. Push your branch and open a Pull Request against `0.9-revise`.
-5. Describe the **what** and the **why** in the PR body. Reference
-   any open issue or `CODE_REVIEW_COMPREHENSIVE.md` item by code
-   (e.g. `Resolves PERF-3`).
-6. Wait for review. A maintainer may request changes before merge.
+1. Describe the changes in `CHANGELOG.md`.
+2. Bump the version in `manifest.json` and `pyproject.toml`.
+3. Tag the release, for example `git tag -a v2.0.1`.
 
 ## Reporting bugs
 
-Use the issue tracker and include:
-
-- Home Assistant version.
-- Integration version (visible under **Settings → Devices &
-  services → Venice AI Conversation**).
-- A redacted debug log snippet
-  (`logger: { logs: { "custom_components.venice_ai": debug } }`).
-- Reproduction steps and expected vs actual behaviour.
-
-## Release process
-
-1. Update `CHANGELOG.md` under the `[Unreleased]` heading.
-2. Bump the version in `custom_components/venice_ai/const.py` and
-   the `manifest.json` (if applicable).
-3. Tag the release (`git tag -a v0.9.1 -m "..."`).
-4. Move the `[Unreleased]` items into a dated heading in
-   `CHANGELOG.md`.
-5. Push tags (`git push origin --tags`).
+Open an issue at
+[ssh-den/venice_ai_home_assistant](https://github.com/ssh-den/venice_ai_home_assistant/issues)
+with the Home Assistant and integration versions, a redacted debug log and steps
+to reproduce.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed
-under the same terms as the project (see `LICENSE`).
+Contributions are licensed under the terms in [LICENSE](LICENSE).
