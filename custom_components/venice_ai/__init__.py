@@ -141,37 +141,27 @@ async def _async_create_model_issues(hass: HomeAssistant, entry: ConfigEntry) ->
     runtime_data = entry.runtime_data
     coordinator = getattr(runtime_data, "coordinator", None)
 
-    available_text_models: set[str] = set()
-    available_audio_models: set[str] = set()
-    if coordinator and coordinator.data:
-        available_text_models = {
+    data = coordinator.data if coordinator else None
+
+    def _ids(model_type: str) -> set[str]:
+        return {
             m.get("id", "")
-            for m in coordinator.data.get("text_models", [])
+            for m in (data or {}).get(model_type, [])
             if isinstance(m, dict)
         }
-        available_audio_models = {
-            m.get("id", "")
-            for m in coordinator.data.get("audio_models", [])
-            if isinstance(m, dict)
-        }
-        _LOGGER.debug(
-            "Repair check using coordinator data: %d text models, %d audio models",
-            len(available_text_models),
-            len(available_audio_models),
-        )
 
     configured_models = {
         CONF_CHAT_MODEL: (
             options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
-            available_text_models,
+            _ids("text_models"),
         ),
         CONF_TTS_MODEL: (
             options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
-            available_audio_models,
+            _ids("tts_models"),
         ),
         CONF_STT_MODEL: (
             options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
-            available_audio_models,
+            _ids("asr_models"),
         ),
     }
 

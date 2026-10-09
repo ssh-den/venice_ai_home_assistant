@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from custom_components.venice_ai.models import ModelInfo, find_model, parse_models
+import pytest
+
+from custom_components.venice_ai.models import (
+    MULTILINGUAL,
+    ModelInfo,
+    TTSModel,
+    find_model,
+    parse_models,
+    parse_tts_models,
+    primary_language,
+    stt_languages,
+)
 
 TEE_MODEL = {
     "id": "tee-model",
@@ -60,3 +71,60 @@ def test_find_model() -> None:
     assert find_model([TEE_MODEL], "tee-model") is not None
     assert find_model([TEE_MODEL], "other") is None
     assert find_model(None, "tee-model") is None
+
+
+def test_tts_model_from_api() -> None:
+    model = TTSModel.from_api(
+        {
+            "id": "tts-kokoro",
+            "model_spec": {
+                "voices": ["af_heart", "zf_xiaobei", "pm_alex"],
+                "supported_formats": ["mp3", "wav"],
+                "default_format": "mp3",
+            },
+        }
+    )
+    assert model.languages == ["en", "pt", "zh"]
+    assert model.voices_for("zh-CN") == ["zf_xiaobei"]
+    assert model.voices_for("ru") == ["af_heart", "zf_xiaobei", "pm_alex"]
+    assert model.audio_format == "mp3"
+
+
+def test_tts_model_multilingual_voices() -> None:
+    model = TTSModel("tts-xai", ("eve", "ara"), ("wav", "pcm"), "wav")
+    assert model.languages == list(MULTILINGUAL)
+    assert model.voices_for("ru") == ["eve", "ara"]
+    assert model.audio_format == "wav"
+
+
+@pytest.mark.parametrize(
+    ("formats", "default", "expected"),
+    [((), None, "mp3"), (("opus", "pcm"), "opus", "opus"), (("flac",), None, "flac")],
+)
+def test_tts_audio_format(
+    formats: tuple[str, ...], default: str | None, expected: str
+) -> None:
+    assert TTSModel("m", ("v",), formats, default).audio_format == expected
+
+
+def test_parse_tts_models() -> None:
+    models = parse_tts_models(
+        [
+            {"id": "spec", "model_spec": {"voices": ["a"]}},
+            {"id": "legacy", "voice_models": ["b"]},
+            {"id": "silent", "model_spec": {"voices": []}},
+            "junk",
+        ]
+    )
+    assert {k: v.voices for k, v in models.items()} == {
+        "spec": ("a",),
+        "legacy": ("b",),
+    }
+
+
+def test_languages_helpers() -> None:
+    assert primary_language("en-US") == "en"
+    assert primary_language("pt_BR") == "pt"
+    assert "ru" in stt_languages("nvidia/parakeet-tdt-0.6b-v3")
+    assert "ja" not in stt_languages("nvidia/parakeet-tdt-0.6b-v3")
+    assert stt_languages("unknown") == list(MULTILINGUAL)

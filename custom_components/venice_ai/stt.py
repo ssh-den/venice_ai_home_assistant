@@ -2,113 +2,52 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import AsyncIterable
-import datetime
 import logging
-import struct
-import time
 
 from homeassistant.components import stt
-from homeassistant.components.stt import (
-    SpeechToTextEntity,
-)
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
-from .client import AsyncVeniceAIClient, VeniceAIError
-from .const import (
-    CONF_STT_MODEL,
-    CONF_STT_RESPONSE_FORMAT,
-    CONF_STT_TIMESTAMPS,
-    DOMAIN,
-    MAX_STT_BUFFER_SIZE,
-    RECOMMENDED_STT_MODEL,
-    RECOMMENDED_STT_RESPONSE_FORMAT,
-    RECOMMENDED_STT_TIMESTAMPS,
-)
+from . import VeniceAIConfigEntry
+from .audio import pcm_to_wav
+from .client import VeniceAIError
+from .const import CONF_STT_MODEL, MAX_STT_BUFFER_SIZE, RECOMMENDED_STT_MODEL
+from .entity import device_info
+from .models import primary_language, stt_languages
 
 _LOGGER = logging.getLogger(__name__)
-
-# Each tuple is (metadata_attr_name, property_name, human_label).
-_STT_VALIDATION_ATTRS = [
-    ("format", "supported_formats", "audio format"),
-    ("codec", "supported_codecs", "audio codec"),
-    ("bit_rate", "supported_bit_rates", "bit rate"),
-    ("sample_rate", "supported_sample_rates", "sample rate"),
-    ("channel", "supported_channels", "channel count"),
-]
-
-
-def _pcm_to_wav(
-    pcm_data: bytes,
-    sample_rate: int = 16000,
-    num_channels: int = 1,
-    bits_per_sample: int = 16,
-) -> bytes:
-    """Convert raw PCM data to WAV format."""
-    # Calculate sizes
-    subchunk2_size = len(pcm_data)
-    chunk_size = 36 + subchunk2_size
-    byte_rate = sample_rate * num_channels * bits_per_sample // 8
-    block_align = num_channels * bits_per_sample // 8
-
-    # WAV header (44 bytes)
-    wav_header = struct.pack(
-        "<4sL4s4sLHHLLHH4sL",
-        b"RIFF",  # ChunkID
-        chunk_size,  # ChunkSize
-        b"WAVE",  # Format
-        b"fmt ",  # Subchunk1ID
-        16,  # Subchunk1Size (PCM)
-        1,  # AudioFormat (PCM)
-        num_channels,  # NumChannels
-        sample_rate,  # SampleRate
-        byte_rate,  # ByteRate
-        block_align,  # BlockAlign
-        bits_per_sample,  # BitsPerSample
-        b"data",  # Subchunk2ID
-        subchunk2_size,  # Subchunk2Size
-    )
-
-    return wav_header + pcm_data
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
+    entry: VeniceAIConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Set up Venice AI STT entity."""
     async_add_entities([VeniceAISTT(entry)])
 
 
-class VeniceAISTT(SpeechToTextEntity):
+class VeniceAISTT(stt.SpeechToTextEntity):
     """The Venice AI Speech-to-Text provider."""
 
-    def __init__(
-        self,
-        entry: ConfigEntry,
-    ) -> None:
+    _attr_has_entity_name = True
+    _attr_name = None
+
+    def __init__(self, entry: VeniceAIConfigEntry) -> None:
         """Initialize Venice AI STT."""
         self.entry = entry
         self._attr_unique_id = f"{entry.entry_id}_stt"
-        self._attr_name = entry.title
-        self._attr_device_info = dr.DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            manufacturer="Venice AI",
-            model="STT",
-            entry_type=dr.DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = device_info(entry)
+
+    @property
+    def _model(self) -> str:
+        return str(self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL))
 
     @property
     def supported_languages(self) -> list[str]:
-        """Return list of supported languages."""
-        # Venice AI parakeet model supports these languages
-        return ["en", "zh", "fr", "hi", "it", "ja", "pl", "es"]
+        """Return the languages of the configured model."""
+        return stt_languages(self._model)
 
     @property
     def supported_formats(self) -> list[stt.AudioFormats]:
@@ -140,118 +79,36 @@ class VeniceAISTT(SpeechToTextEntity):
         metadata: stt.SpeechMetadata,
         stream: AsyncIterable[bytes],
     ) -> stt.SpeechResult:
-        """Process an audio stream to text.
+        """Buffer the audio stream and transcribe it in one request.
 
-        Note: This implementation buffers the entire stream in memory,
-        converts it to WAV format, and sends it as a single request.
-        Venice AI does not currently support chunked streaming uploads
-        for transcriptions.
+        Venice AI does not accept chunked uploads for transcriptions.
         """
-        # Validate metadata against declared supported formats
-        for attr, prop, label in _STT_VALIDATION_ATTRS:
-            supported = getattr(self, prop)
-            if getattr(metadata, attr) not in supported:
+        if not self.check_metadata(metadata):
+            _LOGGER.error("Unsupported audio metadata: %s", metadata)
+            return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
+
+        audio = bytearray()
+        async for chunk in stream:
+            audio.extend(chunk)
+            if len(audio) > MAX_STT_BUFFER_SIZE:
                 _LOGGER.error(
-                    "Unsupported %s: %s. Only %s is supported.",
-                    label,
-                    getattr(metadata, attr),
-                    supported,
+                    "Audio exceeds %d bytes; aborting transcription",
+                    MAX_STT_BUFFER_SIZE,
                 )
-                return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+                return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
+        if not audio:
+            _LOGGER.warning("Received empty audio stream for transcription")
+            return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
 
         try:
-            _stt_start = time.monotonic()
-            _LOGGER.debug(
-                "[PERF-STT] [+0.000s] Audio stream received at %s — buffering audio",
-                datetime.datetime.now().isoformat(timespec="milliseconds"),
+            text = await self.entry.runtime_data.client.transcriptions.create(
+                audio_data=pcm_to_wav(bytes(audio)),
+                model=self._model,
+                language=primary_language(metadata.language),
             )
-
-            # Read all data from the stream using bytearray for efficiency
-            audio_data = bytearray()
-            async for chunk in stream:
-                audio_data.extend(chunk)
-                if len(audio_data) > MAX_STT_BUFFER_SIZE:
-                    _LOGGER.error(
-                        "Audio buffer exceeded maximum size of %d bytes; aborting transcription",
-                        MAX_STT_BUFFER_SIZE,
-                    )
-                    return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-
-            _buffered_t = time.monotonic() - _stt_start
-            _LOGGER.debug(
-                "[PERF-STT] [+%.3fs] Audio buffering complete — %d bytes received",
-                _buffered_t,
-                len(audio_data),
-            )
-
-            # Handle empty audio streams gracefully
-            if len(audio_data) == 0:
-                _LOGGER.warning("Received empty audio stream for transcription")
-                return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-
-            # Read options dynamically so changes after setup take effect immediately
-            model = self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
-            response_format = self.entry.options.get(
-                CONF_STT_RESPONSE_FORMAT, RECOMMENDED_STT_RESPONSE_FORMAT
-            )
-            timestamps = self.entry.options.get(
-                CONF_STT_TIMESTAMPS, RECOMMENDED_STT_TIMESTAMPS
-            )
-
-            _LOGGER.debug(
-                "[PERF-STT] [+%.3fs] Processing audio (%d bytes) with model=%s, format=%s, timestamps=%s",
-                time.monotonic() - _stt_start,
-                len(audio_data),
-                model,
-                response_format,
-                timestamps,
-            )
-
-            # Convert PCM data to WAV format since Venice AI expects proper WAV files
-            wav_data = _pcm_to_wav(
-                bytes(audio_data), sample_rate=16000, num_channels=1, bits_per_sample=16
-            )
-            _LOGGER.debug(
-                "[PERF-STT] [+%.3fs] PCM→WAV conversion done (%d → %d bytes)",
-                time.monotonic() - _stt_start,
-                len(audio_data),
-                len(wav_data),
-            )
-
-            client: AsyncVeniceAIClient = self.entry.runtime_data.client
-
-            _LOGGER.debug(
-                "[PERF-STT] [+%.3fs] Sending to Venice AI transcription API (model=%s)",
-                time.monotonic() - _stt_start,
-                model,
-            )
-            _api_start = time.monotonic()
-
-            result = await client.transcriptions.create(
-                audio_data=wav_data,
-                model=model,
-                response_format=response_format,
-                timestamps=timestamps,
-            )
-
-            _api_elapsed = time.monotonic() - _api_start
-            _total_elapsed = time.monotonic() - _stt_start
-            text = result.get("text", "")
-            _LOGGER.debug(
-                "[PERF-STT] [+%.3fs] Transcription received in %.3fs — %d chars: %r",
-                _total_elapsed,
-                _api_elapsed,
-                len(text),
-                text[:100] if text else "<empty>",
-            )
-
-            return stt.SpeechResult(text, stt.SpeechResultState.SUCCESS)
-
         except VeniceAIError as err:
             _LOGGER.error("Venice AI transcription error: %s", err)
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
-        except asyncio.CancelledError:
-            raise
-        except Exception as err:
-            _LOGGER.exception("Unexpected error during transcription: %s", err)
-            return stt.SpeechResult("", stt.SpeechResultState.ERROR)
+            return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
+
+        _LOGGER.debug("Transcribed %d bytes of audio: %r", len(audio), text)
+        return stt.SpeechResult(text, stt.SpeechResultState.SUCCESS)

@@ -40,11 +40,8 @@
           "disable_thinking": "Disable thinking (for reasoning models)",
           "max_tool_iterations": "Max Tool Iterations",
           "tts_model_voice": "TTS Voice (Model → Voice)",
-          "tts_response_format": "TTS Response Format",
           "tts_speed": "TTS Speed",
           "stt_model": "STT Model",
-          "stt_response_format": "STT Response Format",
-          "stt_timestamps": "STT Include Timestamps",
           "stream_response": "Stream responses",
           "request_timeout": "Request timeout (seconds)",
           "image_model": "Image model"
@@ -60,12 +57,9 @@
           "disable_thinking": "Ask reasoning models to skip the thinking phase for faster, cheaper answers.",
           "stream_response": "Receive the answer incrementally, which lowers the time to the first words.",
           "max_tool_iterations": "How many rounds of Home Assistant tool calls the model may make per request.",
-          "tts_model_voice": "Text-to-speech model and voice. Type a model name to filter the list.",
-          "tts_response_format": "Audio format returned by text-to-speech.",
+          "tts_model_voice": "Text-to-speech model and voice. Type a model name to filter the list. Kokoro voices are grouped by language; pick another model for languages Kokoro does not speak.",
           "tts_speed": "Playback speed of generated speech.",
-          "stt_model": "Speech-to-text model used to transcribe voice commands.",
-          "stt_response_format": "Format of the transcription returned by Venice AI.",
-          "stt_timestamps": "Request word timestamps in the transcription.",
+          "stt_model": "Speech-to-text model used to transcribe voice commands. Parakeet covers European languages, Whisper-based models almost every language.",
           "request_timeout": "How long to wait for a Venice AI response before giving up.",
           "image_model": "Model used by the generate_image action when no model is given."
         }

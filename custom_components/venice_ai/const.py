@@ -39,8 +39,6 @@ CONF_TTS_MODEL = "tts_model"
 RECOMMENDED_TTS_MODEL = "tts-kokoro"
 CONF_TTS_VOICE = "tts_voice"
 RECOMMENDED_TTS_VOICE = "bm_daniel"
-CONF_TTS_RESPONSE_FORMAT = "tts_response_format"
-RECOMMENDED_TTS_RESPONSE_FORMAT = "mp3"
 CONF_TTS_SPEED = "tts_speed"
 RECOMMENDED_TTS_SPEED = 1.0
 
@@ -51,10 +49,6 @@ RECOMMENDED_IMAGE_MODEL = "default"
 # Venice AI STT options
 CONF_STT_MODEL = "stt_model"
 RECOMMENDED_STT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
-CONF_STT_RESPONSE_FORMAT = "stt_response_format"
-RECOMMENDED_STT_RESPONSE_FORMAT = "json"
-CONF_STT_TIMESTAMPS = "stt_timestamps"
-RECOMMENDED_STT_TIMESTAMPS = False
 
 # Conversation tool iteration limit
 CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"

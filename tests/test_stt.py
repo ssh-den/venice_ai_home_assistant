@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from homeassistant.components import stt
 from homeassistant.components.stt.const import DATA_COMPONENT
 from homeassistant.core import HomeAssistant
-import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.venice_ai.audio import pcm_to_wav
 from custom_components.venice_ai.client import NetworkError
 from custom_components.venice_ai.const import CONF_STT_MODEL
-from custom_components.venice_ai.stt import VeniceAISTT, _pcm_to_wav
+from custom_components.venice_ai.stt import VeniceAISTT
 
 
 def _entity(hass: HomeAssistant) -> VeniceAISTT:
@@ -42,31 +42,48 @@ async def _audio(*chunks: bytes) -> AsyncGenerator[bytes]:
         yield chunk
 
 
-def test_pcm_to_wav_header() -> None:
-    wav = _pcm_to_wav(b"\x01\x02\x03\x04")
-    assert wav[:4] == b"RIFF"
-    assert wav[8:16] == b"WAVEfmt "
-    assert len(wav) == 48
-    assert wav.endswith(b"\x01\x02\x03\x04")
-
-
 async def test_transcribe(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
     hass.config_entries.async_update_entry(
         setup_integration, options={CONF_STT_MODEL: "custom-asr"}
     )
-    mock_client.transcriptions.create = AsyncMock(return_value={"text": "hello"})
+    mock_client.transcriptions.create = AsyncMock(return_value="привет")
 
     result = await _entity(hass).async_process_audio_stream(
-        _metadata(), _audio(b"\x00\x01", b"\x02\x03")
+        _metadata(language="ru"), _audio(b"\x00\x01", b"\x02\x03")
     )
 
     assert result.result is stt.SpeechResultState.SUCCESS
-    assert result.text == "hello"
+    assert result.text == "привет"
     kwargs = mock_client.transcriptions.create.call_args.kwargs
     assert kwargs["model"] == "custom-asr"
-    assert kwargs["audio_data"] == _pcm_to_wav(b"\x00\x01\x02\x03")
+    assert kwargs["language"] == "ru"
+    assert kwargs["audio_data"] == pcm_to_wav(b"\x00\x01\x02\x03")
+
+
+async def test_languages_follow_model(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    entity = _entity(hass)
+    assert "ru" in entity.supported_languages
+    assert "ja" not in entity.supported_languages
+
+    hass.config_entries.async_update_entry(
+        setup_integration, options={CONF_STT_MODEL: "openai/whisper-large-v3"}
+    )
+    assert "ja" in entity.supported_languages
+
+
+async def test_unsupported_language(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    mock_client.transcriptions.create = AsyncMock()
+    result = await _entity(hass).async_process_audio_stream(
+        _metadata(language="ja"), _audio(b"\x00")
+    )
+    assert result.result is stt.SpeechResultState.ERROR
+    mock_client.transcriptions.create.assert_not_awaited()
 
 
 async def test_unsupported_format(
@@ -97,14 +114,10 @@ async def test_buffer_limit(
     assert result.result is stt.SpeechResultState.ERROR
 
 
-@pytest.mark.parametrize("error", [NetworkError("down"), ValueError("boom")])
 async def test_transcription_error(
-    hass: HomeAssistant,
-    setup_integration: MockConfigEntry,
-    mock_client: MagicMock,
-    error: Exception,
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
-    mock_client.transcriptions.create = AsyncMock(side_effect=error)
+    mock_client.transcriptions.create = AsyncMock(side_effect=NetworkError("down"))
     result = await _entity(hass).async_process_audio_stream(
         _metadata(), _audio(b"\x00\x01")
     )

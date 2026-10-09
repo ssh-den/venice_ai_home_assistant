@@ -30,14 +30,13 @@ def _failing_list(
     return _list
 
 
-async def test_collects_models_and_voices(
+async def test_collects_models_by_type(
     hass: HomeAssistant, mock_client: MagicMock
 ) -> None:
     data = await VeniceAIDataUpdateCoordinator(hass, mock_client)._async_update_data()
-    assert len(data["text_models"]) == len(MODELS_BY_TYPE["text"])
-    assert [m["model_type"] for m in data["audio_models"]] == ["tts", "asr"]
-    assert data["voices"] == ["bm_daniel", "af_heart"]
-    assert len(data["image_models"]) == len(MODELS_BY_TYPE["image"])
+    assert dict(data) == {
+        f"{model_type}_models": models for model_type, models in MODELS_BY_TYPE.items()
+    }
 
 
 async def test_partial_failure_is_tolerated(
@@ -48,7 +47,8 @@ async def test_partial_failure_is_tolerated(
     )
     data = await VeniceAIDataUpdateCoordinator(hass, mock_client)._async_update_data()
     assert data["text_models"]
-    assert [m["model_type"] for m in data["audio_models"]] == ["tts"]
+    assert data["tts_models"]
+    assert data["asr_models"] == []
     assert data["image_models"] == []
 
 

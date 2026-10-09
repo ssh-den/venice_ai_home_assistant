@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dev = [
     "pytest-homeassistant-custom-component",
     "openai>=1.93.3",
+    "sentence-stream>=1.1.0",
     "voluptuous-openapi>=0.0.4",
     # Requirements of the Home Assistant components this integration loads
     "ha-ffmpeg",

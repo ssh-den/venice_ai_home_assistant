@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
@@ -73,10 +74,7 @@ async def async_get_config_entry_diagnostics(
         if coordinator.last_exception is not None:
             last_exception = f"{type(coordinator.last_exception).__name__}: {coordinator.last_exception}"
 
-        coordinator_data = coordinator.data or {}
-        text_models = coordinator_data.get("text_models", [])
-        audio_models = coordinator_data.get("audio_models", [])
-        voices = coordinator_data.get("voices", [])
+        coordinator_data = cast(Mapping[str, list[Any]], coordinator.data or {})
 
         diagnostics["coordinator"] = {
             "last_update_success": coordinator.last_update_success,
@@ -87,9 +85,7 @@ async def async_get_config_entry_diagnostics(
                 and coordinator.update_interval
                 else None
             ),
-            "text_models_count": len(text_models),
-            "audio_models_count": len(audio_models),
-            "voices_count": len(voices),
+            **{f"{key}_count": len(models) for key, models in coordinator_data.items()},
         }
     else:
         diagnostics["coordinator"] = None

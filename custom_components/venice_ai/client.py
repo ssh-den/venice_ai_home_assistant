@@ -272,30 +272,25 @@ class Speech:
         """Initialize the speech API."""
         self.client = client
 
-    def _args(
-        self, text: str, voice: str, model: str, audio_output: str, speed: float
-    ) -> dict[str, Any]:
-        return {
-            "input": text,
-            "model": model,
-            "voice": voice,
-            "response_format": cast(Any, audio_output),
-            "speed": speed,
-        }
-
     async def generate(
         self,
         text: str,
-        voice: str = "bm_daniel",
-        model: str = "tts-kokoro",
+        voice: str,
+        model: str,
         audio_output: str = "mp3",
         speed: float = 1.0,
+        language: str | None = None,
     ) -> bytes:
         """Generate speech audio from text."""
         response = await self.client.call(
             "generating speech",
             self.client.sdk.audio.speech.create(
-                **self._args(text, voice, model, audio_output, speed)
+                input=text,
+                model=model,
+                voice=voice,
+                response_format=cast(Any, audio_output),
+                speed=speed,
+                extra_body={"language": language} if language else None,
             ),
         )
         return response.content
@@ -303,18 +298,26 @@ class Speech:
     async def generate_streaming(
         self,
         text: str,
-        voice: str = "bm_daniel",
-        model: str = "tts-kokoro",
+        voice: str,
+        model: str,
         audio_output: str = "mp3",
         speed: float = 1.0,
+        language: str | None = None,
     ) -> AsyncIterator[bytes]:
         """Generate speech audio, yielding chunks as they arrive."""
+        extra: dict[str, Any] = {"streaming": True}
+        if language:
+            extra["language"] = language
         metrics = self.client.metrics
         metrics.record_request()
         try:
             async with self.client.sdk.audio.speech.with_streaming_response.create(
-                **self._args(text, voice, model, audio_output, speed),
-                extra_body={"streaming": True},
+                input=text,
+                model=model,
+                voice=voice,
+                response_format=cast(Any, audio_output),
+                speed=speed,
+                extra_body=extra,
             ) as response:
                 async for chunk in response.iter_bytes():
                     yield chunk
@@ -332,25 +335,19 @@ class Transcriptions:
         self.client = client
 
     async def create(
-        self,
-        audio_data: bytes,
-        model: str = "nvidia/parakeet-tdt-0.6b-v3",
-        response_format: str = "json",
-        timestamps: bool = False,
-    ) -> dict[str, Any]:
-        """Transcribe WAV audio."""
-        result: Any = await self.client.call(
+        self, audio_data: bytes, model: str, language: str | None = None
+    ) -> str:
+        """Transcribe WAV audio and return the text."""
+        result = await self.client.call(
             "creating transcription",
             self.client.sdk.audio.transcriptions.create(
                 file=("audio.wav", audio_data, "audio/wav"),
                 model=model,
-                response_format=cast(Any, response_format),
-                extra_body={"timestamps": str(timestamps).lower()},
+                response_format="json",
+                extra_body={"language": language} if language else None,
             ),
         )
-        if isinstance(result, str):
-            return {"text": result}
-        return cast(dict[str, Any], result.model_dump())
+        return str(result.text)
 
 
 class Images:

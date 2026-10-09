@@ -16,18 +16,17 @@ from .client import (
     VeniceAIError,
 )
 from .const import UPDATE_INTERVAL
-from .models import model_voices
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class VeniceAICoordinatorData(TypedDict):
-    """Models and voices fetched from Venice AI."""
+    """Models offered by Venice AI, by type."""
 
     text_models: list[dict[str, Any]]
-    audio_models: list[dict[str, Any]]
+    tts_models: list[dict[str, Any]]
+    asr_models: list[dict[str, Any]]
     image_models: list[dict[str, Any]]
-    voices: list[str]
 
 
 class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorData]):
@@ -48,18 +47,7 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         )
 
     async def _async_update_data(self) -> VeniceAICoordinatorData:
-        """Fetch models and voices from Venice AI.
-
-        Each category is fetched independently so a failure in one
-        does not block the others.
-        """
-        data: VeniceAICoordinatorData = {
-            "text_models": [],
-            "audio_models": [],
-            "image_models": [],
-            "voices": [],
-        }
-
+        """Fetch the model lists from Venice AI."""
         try:
             await self.client.validate_api_key()
         except AuthenticationError as err:
@@ -67,25 +55,17 @@ class VeniceAIDataUpdateCoordinator(DataUpdateCoordinator[VeniceAICoordinatorDat
         except VeniceAIError as err:
             raise UpdateFailed(f"Venice AI is unavailable: {err}") from err
 
-        data["text_models"] = await self._async_fetch_models("text")
-        tts_models = await self._async_fetch_models("tts")
-        asr_models = await self._async_fetch_models("asr")
-        data["image_models"] = await self._async_fetch_models("image")
-        for model_type, models in (("tts", tts_models), ("asr", asr_models)):
-            for model in models:
-                model["model_type"] = model_type
-            data["audio_models"].extend(models)
-        for model in tts_models:
-            for voice in model_voices(model):
-                if voice not in data["voices"]:
-                    data["voices"].append(voice)
-
+        data: VeniceAICoordinatorData = {
+            "text_models": await self._async_fetch_models("text"),
+            "tts_models": await self._async_fetch_models("tts"),
+            "asr_models": await self._async_fetch_models("asr"),
+            "image_models": await self._async_fetch_models("image"),
+        }
         # Partial failures are tolerated so the other platforms keep working.
-        if not data["text_models"] and not data["audio_models"] and not data["voices"]:
+        if not any(data.values()):
             raise UpdateFailed(
                 "All Venice AI data fetches failed; coordinator has no data to return."
             )
-
         return data
 
     async def _async_fetch_models(self, model_type: str) -> list[dict[str, Any]]:

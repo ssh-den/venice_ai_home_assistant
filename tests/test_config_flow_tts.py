@@ -13,58 +13,7 @@ from custom_components.venice_ai.const import (
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_VOICE,
 )
-
-
-class TestTTSModelInfoExtraction:
-    """Tests for ``_extract_tts_model_info``."""
-
-    def test_model_spec_voices_extracted(self) -> None:
-        info = helpers._extract_tts_model_info(
-            [
-                {
-                    "id": "tts-kokoro",
-                    "model_spec": {
-                        "voices": ["bm_daniel", "am_liam"],
-                    },
-                }
-            ]
-        )
-        assert set(info.keys()) == {"tts-kokoro"}
-        assert info["tts-kokoro"].voices == ["bm_daniel", "am_liam"]
-        assert info["tts-kokoro"].default_voice == "bm_daniel"
-
-    def test_explicit_default_voice(self) -> None:
-        info = helpers._extract_tts_model_info(
-            [
-                {
-                    "id": "tts-kokoro",
-                    "default_voice": "am_liam",
-                    "model_spec": {"voices": ["bm_daniel", "am_liam"]},
-                }
-            ]
-        )
-        assert info["tts-kokoro"].default_voice == "am_liam"
-
-    def test_legacy_voice_models_fallback(self) -> None:
-        info = helpers._extract_tts_model_info(
-            [
-                {
-                    "id": "tts-legacy",
-                    "voice_models": ["voice_a", "voice_b"],
-                }
-            ]
-        )
-        assert info["tts-legacy"].voices == ["voice_a", "voice_b"]
-        assert info["tts-legacy"].default_voice == "voice_a"
-
-    def test_models_without_voices_are_ignored(self) -> None:
-        info = helpers._extract_tts_model_info(
-            [
-                {"id": "tts-empty", "model_spec": {"voices": []}},
-                {"id": "tts-missing"},
-            ]
-        )
-        assert not info
+from custom_components.venice_ai.models import TTSModel
 
 
 class TestParseCombinedTTSValue:
@@ -88,10 +37,8 @@ class TestResolveCombinedTTSValue:
     @pytest.fixture
     def tts_info(self) -> dict[str, Any]:
         return {
-            "tts-kokoro": helpers._TTSModelInfo(
-                "tts-kokoro", ["bm_daniel", "am_liam"], "bm_daniel"
-            ),
-            "tts-eleven": helpers._TTSModelInfo("tts-eleven", ["rachel"], "rachel"),
+            "tts-kokoro": TTSModel("tts-kokoro", ("bm_daniel", "am_liam")),
+            "tts-eleven": TTSModel("tts-eleven", ("rachel",)),
         }
 
     def test_submitted_value_takes_priority(self, tts_info: dict[str, Any]) -> None:
@@ -117,7 +64,7 @@ class TestResolveCombinedTTSValue:
         assert result == f"{RECOMMENDED_TTS_MODEL} → {RECOMMENDED_TTS_VOICE}"
 
     def test_first_model_when_recommended_missing(self) -> None:
-        info = {"tts-other": helpers._TTSModelInfo("tts-other", ["v1"], "v1")}
+        info = {"tts-other": TTSModel("tts-other", ("v1",))}
         result = helpers._resolve_combined_tts_value(info, None, {})
         assert result == "tts-other → v1"
 
@@ -137,10 +84,8 @@ class TestBuildCombinedTTSOptions:
 
     def test_builds_options_for_all_models(self) -> None:
         tts_info = {
-            "tts-kokoro": helpers._TTSModelInfo(
-                "tts-kokoro", ["bm_daniel", "am_liam"], "bm_daniel"
-            ),
-            "tts-eleven": helpers._TTSModelInfo("tts-eleven", ["rachel"], "rachel"),
+            "tts-kokoro": TTSModel("tts-kokoro", ("bm_daniel", "am_liam")),
+            "tts-eleven": TTSModel("tts-eleven", ("rachel",)),
         }
         options = helpers._build_combined_tts_options(tts_info)
         values = [o["value"] for o in options]

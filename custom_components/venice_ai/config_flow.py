@@ -41,12 +41,9 @@ from .const import (
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
     CONF_STT_MODEL,
-    CONF_STT_RESPONSE_FORMAT,
-    CONF_STT_TIMESTAMPS,
     CONF_TEMPERATURE,
     CONF_TOP_P,
     CONF_TTS_MODEL,
-    CONF_TTS_RESPONSE_FORMAT,
     CONF_TTS_SPEED,
     CONF_TTS_VOICE,
     DEFAULT_SYSTEM_PROMPT,
@@ -60,16 +57,13 @@ from .const import (
     RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_STRIP_THINKING_RESPONSE,
     RECOMMENDED_STT_MODEL,
-    RECOMMENDED_STT_RESPONSE_FORMAT,
-    RECOMMENDED_STT_TIMESTAMPS,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
     RECOMMENDED_TTS_MODEL,
-    RECOMMENDED_TTS_RESPONSE_FORMAT,
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
 )
-from .models import model_voices, parse_models
+from .models import TTSModel, parse_models, parse_tts_models
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -204,52 +198,8 @@ class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
         return VeniceAIOptionsFlow()
 
 
-# ---------------------------------------------------------------------------
-# TTS model metadata helpers
-# ---------------------------------------------------------------------------
-
-
-class _TTSModelInfo:
-    """Lightweight container for a TTS model and its voices."""
-
-    def __init__(
-        self, model_id: str, voices: list[str], default_voice: str | None
-    ) -> None:
-        self.model_id = model_id
-        self.voices = voices
-        self.default_voice = default_voice
-
-
-def _extract_tts_model_info(models: list[dict[str, Any]]) -> dict[str, _TTSModelInfo]:
-    """Build a lookup of model_id -> _TTSModelInfo from API response objects.
-
-    Venice AI returns voices under ``model_spec.voices``.  The legacy
-    ``voice_models`` field is also honoured as a fallback.
-    """
-    info: dict[str, _TTSModelInfo] = {}
-    for model in models:
-        if not isinstance(model, dict):
-            continue
-        model_id = model.get("id")
-        if not isinstance(model_id, str) or not model_id:
-            continue
-
-        voices = model_voices(model)
-        if not voices:
-            continue
-
-        # Prefer an explicit default_voice if provided, otherwise the first voice.
-        default_voice = model.get("default_voice")
-        if not isinstance(default_voice, str) or default_voice not in voices:
-            default_voice = voices[0]
-
-        info[model_id] = _TTSModelInfo(str(model_id), voices, default_voice)
-
-    return info
-
-
 def _build_combined_tts_options(
-    tts_info: dict[str, _TTSModelInfo],
+    tts_info: dict[str, TTSModel],
 ) -> list[SelectOptionDict]:
     """Return a flat 'model → voice' SelectOptionDict list covering all models.
 
@@ -283,7 +233,7 @@ def _parse_combined_tts_value(value: str) -> tuple[str, str] | None:
 
 
 def _resolve_combined_tts_value(
-    tts_info: dict[str, _TTSModelInfo],
+    tts_info: dict[str, TTSModel],
     user_input: dict[str, Any] | None,
     saved_options: Mapping[str, Any],
 ) -> str:
@@ -317,10 +267,29 @@ def _resolve_combined_tts_value(
     for candidate in [RECOMMENDED_TTS_MODEL, *sorted(tts_info)]:
         info = tts_info.get(candidate)
         if info and info.voices:
-            voice = info.default_voice if info.default_voice else info.voices[0]
-            return f"{candidate}{_TTS_MV_SEP}{voice}"
+            return f"{candidate}{_TTS_MV_SEP}{info.voices[0]}"
 
     return f"{RECOMMENDED_TTS_MODEL}{_TTS_MV_SEP}{RECOMMENDED_TTS_VOICE}"
+
+
+def _model_label(model: dict[str, Any]) -> str:
+    spec = model.get("model_spec")
+    name = spec.get("name") if isinstance(spec, dict) else None
+    return f"{name} ({model['id']})" if name else str(model["id"])
+
+
+async def _async_list_models(
+    client: AsyncVeniceAIClient, model_type: str, errors: dict[str, str]
+) -> list[dict[str, Any]]:
+    """List one model category, recording an auth failure in ``errors``."""
+    try:
+        return await client.models.list(model_type=model_type)
+    except AuthenticationError:
+        _LOGGER.error("Authentication error fetching %s models", model_type)
+        errors["base"] = "invalid_auth"
+    except VeniceAIError as err:
+        _LOGGER.warning("Failed to fetch %s models: %s", model_type, err)
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -351,108 +320,49 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
         self,
     ) -> tuple[
         list[SelectOptionDict],
-        dict[str, _TTSModelInfo],
+        dict[str, TTSModel],
         list[SelectOptionDict],
         dict[str, str],
     ]:
-        """Fetch the latest available models live from Venice AI.
-
-        A fresh API call is always made when the options flow opens so that
-        any models Venice.ai has added since the last coordinator refresh are
-        immediately visible.
+        """Fetch the models live, so newly added ones show up immediately.
 
         Returns:
-            (chat_model_options, tts_model_info, stt_model_options, errors)
+            (chat_model_options, tts_models, stt_model_options, errors)
         """
-        chat_options: list[SelectOptionDict] = []
-        tts_info: dict[str, _TTSModelInfo] = {}
-        stt_options: list[SelectOptionDict] = []
         errors: dict[str, str] = {}
-
         api_key = self.config_entry.data.get(CONF_API_KEY)
         if not api_key:
             _LOGGER.warning("No API key found in config entry for options flow")
             errors["base"] = "missing_api_key"
-            return chat_options, tts_info, stt_options, errors
+            fetched: dict[str, list[dict[str, Any]]] = {}
+        else:
+            async with AsyncVeniceAIClient(
+                api_key=api_key, http_client=get_async_client(self.hass)
+            ) as client:
+                fetched = {
+                    model_type: await _async_list_models(client, model_type, errors)
+                    for model_type in ("text", "tts", "asr")
+                }
 
-        async with AsyncVeniceAIClient(
-            api_key=api_key,
-            http_client=get_async_client(self.hass),
-        ) as client:
-            try:
-                _LOGGER.debug("Fetching text models for options flow")
-                text_resp = await client.models.list(model_type="text")
-                if isinstance(text_resp, list):
-                    chat_options = [
-                        SelectOptionDict(label=info.label, value=info.id)
-                        for info in parse_models(text_resp).values()
-                    ]
-                    _LOGGER.debug("Found %d text models", len(chat_options))
-            except AuthenticationError:
-                _LOGGER.error("Authentication error fetching text models")
-                errors["base"] = "invalid_auth"
-            except VeniceAIError as err:
-                _LOGGER.warning("Failed to fetch text models: %s", err)
-            except Exception:
-                _LOGGER.exception("Unexpected error fetching text models")
-
-            try:
-                _LOGGER.debug("Fetching TTS models for options flow")
-                tts_resp = await client.models.list(model_type="tts")
-                if isinstance(tts_resp, list):
-                    tts_info = _extract_tts_model_info(tts_resp)
-                    _LOGGER.debug("Found %d TTS models with voices", len(tts_info))
-            except AuthenticationError:
-                _LOGGER.error("Authentication error fetching TTS models")
-                errors["base"] = "invalid_auth"
-            except VeniceAIError as err:
-                _LOGGER.warning("Failed to fetch TTS models: %s", err)
-            except Exception:
-                _LOGGER.exception("Unexpected error fetching TTS models")
-
-            try:
-                _LOGGER.debug("Fetching ASR models for options flow")
-                asr_resp = await client.models.list(model_type="asr")
-                if isinstance(asr_resp, list):
-                    stt_options = [
-                        SelectOptionDict(
-                            label=m.get("id", "Unknown"), value=m.get("id", "")
-                        )
-                        for m in asr_resp
-                        if isinstance(m, dict) and m.get("id")
-                    ]
-                    _LOGGER.debug("Found %d STT models", len(stt_options))
-            except AuthenticationError:
-                _LOGGER.error("Authentication error fetching ASR models")
-                errors["base"] = "invalid_auth"
-            except VeniceAIError as err:
-                _LOGGER.warning("Failed to fetch ASR models: %s", err)
-            except Exception:
-                _LOGGER.exception("Unexpected error fetching ASR models")
-
-        # Fallback to defaults when nothing was fetched.
-        if not chat_options:
-            chat_options = [
-                SelectOptionDict(
-                    label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL
-                )
-            ]
-        if not tts_info:
-            tts_info = {
-                RECOMMENDED_TTS_MODEL: _TTSModelInfo(
-                    RECOMMENDED_TTS_MODEL,
-                    [RECOMMENDED_TTS_VOICE],
-                    RECOMMENDED_TTS_VOICE,
-                )
-            }
-        if not stt_options:
-            stt_options = [
-                SelectOptionDict(
-                    label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL
-                )
-            ]
-
-        return chat_options, tts_info, stt_options, errors
+        chat_options = [
+            SelectOptionDict(label=info.label, value=info.id)
+            for info in parse_models(fetched.get("text", [])).values()
+        ] or [
+            SelectOptionDict(label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL)
+        ]
+        tts_models = parse_tts_models(fetched.get("tts", [])) or {
+            RECOMMENDED_TTS_MODEL: TTSModel(
+                RECOMMENDED_TTS_MODEL, (RECOMMENDED_TTS_VOICE,)
+            )
+        }
+        stt_options = [
+            SelectOptionDict(label=_model_label(m), value=m["id"])
+            for m in fetched.get("asr", [])
+            if isinstance(m, dict) and m.get("id")
+        ] or [
+            SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)
+        ]
+        return chat_options, tts_models, stt_options, errors
 
     async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
         """Return the available Home Assistant LLM APIs as select options."""
@@ -570,16 +480,6 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(CONF_TTS_RESPONSE_FORMAT): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(label="MP3", value="mp3"),
-                            SelectOptionDict(label="WAV", value="wav"),
-                            SelectOptionDict(label="OGG", value="ogg"),
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
                 vol.Optional(CONF_TTS_SPEED): NumberSelector(
                     NumberSelectorConfig(
                         min=0.25, max=4.0, step=0.25, mode=NumberSelectorMode.SLIDER
@@ -592,21 +492,6 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
                         mode=SelectSelectorMode.DROPDOWN,
                     )
                 ),
-                vol.Optional(CONF_STT_RESPONSE_FORMAT): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(label="JSON", value="json"),
-                            SelectOptionDict(label="Text", value="text"),
-                            SelectOptionDict(label="SRT", value="srt"),
-                            SelectOptionDict(
-                                label="Verbose JSON", value="verbose_json"
-                            ),
-                            SelectOptionDict(label="VTT", value="vtt"),
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(CONF_STT_TIMESTAMPS): BooleanSelector(),
                 vol.Optional(CONF_IMAGE_MODEL): SelectSelector(
                     SelectSelectorConfig(
                         options=[
@@ -732,11 +617,8 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
             CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
             CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
             CONF_MAX_TOOL_ITERATIONS: RECOMMENDED_MAX_TOOL_ITERATIONS,
-            CONF_TTS_RESPONSE_FORMAT: RECOMMENDED_TTS_RESPONSE_FORMAT,
             CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED,
             CONF_STT_MODEL: RECOMMENDED_STT_MODEL,
-            CONF_STT_RESPONSE_FORMAT: RECOMMENDED_STT_RESPONSE_FORMAT,
-            CONF_STT_TIMESTAMPS: RECOMMENDED_STT_TIMESTAMPS,
             CONF_REQUEST_TIMEOUT: RECOMMENDED_REQUEST_TIMEOUT,
             CONF_IMAGE_MODEL: RECOMMENDED_IMAGE_MODEL,
         }

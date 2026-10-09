@@ -25,6 +25,8 @@ from custom_components.venice_ai.const import (
 
 # Text model with structured output but without function calling
 SCHEMA_MODEL = "schema-model"
+# Multilingual TTS model that only produces WAV
+WAV_TTS_MODEL = "tts-wav-only"
 
 MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
     "text": [
@@ -54,8 +56,16 @@ MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
         {
             "id": RECOMMENDED_TTS_MODEL,
             "type": "tts",
-            "model_spec": {"voices": ["bm_daniel", "af_heart"]},
-        }
+            "model_spec": {
+                "voices": ["bm_daniel", "af_heart", "jf_alpha"],
+                "supported_formats": ["mp3", "wav"],
+            },
+        },
+        {
+            "id": WAV_TTS_MODEL,
+            "type": "tts",
+            "model_spec": {"voices": ["tara"], "supported_formats": ["wav"]},
+        },
     ],
     "asr": [{"id": RECOMMENDED_STT_MODEL, "type": "asr"}],
     "image": [

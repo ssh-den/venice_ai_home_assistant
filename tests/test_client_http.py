@@ -217,14 +217,15 @@ async def test_streaming_speech() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         assert body["streaming"] is True
-        assert body["response_format"] == "ogg"
+        assert body["response_format"] == "wav"
+        assert body["language"] == "ru"
         return httpx.Response(200, content=b"audio-bytes")
 
     client = _make_client(handler)
     chunks = [
         chunk
         async for chunk in client.speech.generate_streaming(
-            text="hi", audio_output="ogg"
+            text="hi", voice="v", model="m", audio_output="wav", language="ru"
         )
     ]
     assert b"".join(chunks) == b"audio-bytes"
@@ -232,12 +233,15 @@ async def test_streaming_speech() -> None:
 
 async def test_transcription() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert b'name="timestamps"' in request.content
+        assert b'name="language"' in request.content
+        assert b'name="timestamps"' not in request.content
         return httpx.Response(200, json={"text": "hello"})
 
     client = _make_client(handler)
-    result = await client.transcriptions.create(audio_data=b"RIFF", timestamps=True)
-    assert result["text"] == "hello"
+    text = await client.transcriptions.create(
+        audio_data=b"RIFF", model="m", language="ru"
+    )
+    assert text == "hello"
 
 
 async def test_request_timeout_is_applied() -> None:
