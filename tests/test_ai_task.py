@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 from homeassistant.components import ai_task
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, selector
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 import voluptuous as vol
@@ -76,6 +76,38 @@ async def test_generate_structured_data_native_schema(
     schema = kwargs["response_format"]["json_schema"]["schema"]
     assert schema["required"] == ["name"]
     assert all("JSON schema" not in m["content"] for m in kwargs["messages"])
+
+
+async def test_generate_structured_data_with_selectors(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    """Structures built from selectors, as ai_task.generate_data does, convert."""
+    hass.config_entries.async_update_entry(
+        setup_integration, options={CONF_CHAT_MODEL: SCHEMA_MODEL}
+    )
+    mock_client.chat.create_non_streaming.return_value = {
+        "choices": [{"message": {"content": '{"name": "Bob", "age": 3}'}}]
+    }
+    result = await ai_task.async_generate_data(
+        hass,
+        task_name="test",
+        entity_id=_entity_id(hass, setup_integration),
+        instructions="Make up a name",
+        structure=vol.Schema(
+            {
+                vol.Required("name"): selector.TextSelector(),
+                vol.Optional("age"): selector.NumberSelector(),
+            }
+        ),
+    )
+    assert result.data == {"name": "Bob", "age": 3}
+
+    kwargs = mock_client.chat.create_non_streaming.call_args.kwargs
+    schema = kwargs["response_format"]["json_schema"]["schema"]
+    assert schema["properties"] == {
+        "name": {"type": "string"},
+        "age": {"type": "number"},
+    }
 
 
 async def test_generate_structured_data_invalid(

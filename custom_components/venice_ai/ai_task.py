@@ -9,7 +9,7 @@ from typing import Any
 from homeassistant.components import ai_task, conversation
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from voluptuous_openapi import convert
 
@@ -93,16 +93,24 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         info = get_chat_model_info(self.entry, model)
         response_format: dict[str, Any] | None = None
-        if task.structure and info is not None and info.supports_response_schema:
+        schema = (
+            convert(
+                task.structure,
+                custom_serializer=(
+                    chat_log.llm_api.custom_serializer
+                    if chat_log.llm_api
+                    else llm.selector_serializer
+                ),
+            )
+            if task.structure
+            else None
+        )
+        if schema and info is not None and info.supports_response_schema:
             response_format = {
                 "type": "json_schema",
-                "json_schema": {
-                    "name": "result",
-                    "schema": convert(task.structure),
-                },
+                "json_schema": {"name": "result", "schema": schema},
             }
-        elif task.structure:
-            schema = convert(task.structure)
+        elif schema:
             messages.insert(
                 len(messages) - 1,
                 {

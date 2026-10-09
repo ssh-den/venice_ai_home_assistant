@@ -219,7 +219,7 @@ async def test_rate_limit_returns_error(
     assert "rate limit" in result.response.speech["plain"]["speech"]
 
 
-@pytest.mark.parametrize("options", [{CONF_STRIP_THINKING_RESPONSE: True}])
+@pytest.mark.parametrize("options", [{}])
 async def test_streaming_answer(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:

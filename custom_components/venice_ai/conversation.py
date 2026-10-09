@@ -36,6 +36,7 @@ from .const import (
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_STREAM_RESPONSE,
+    RECOMMENDED_STRIP_THINKING_RESPONSE,
     RECOMMENDED_TEMPERATURE,
     RECOMMENDED_TOP_P,
 )
@@ -311,7 +312,11 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
     ) -> None:
         """Call the model until it answers without tool calls."""
         options = self.entry.options
-        strip = bool(options.get(CONF_STRIP_THINKING_RESPONSE, False))
+        strip = bool(
+            options.get(
+                CONF_STRIP_THINKING_RESPONSE, RECOMMENDED_STRIP_THINKING_RESPONSE
+            )
+        )
         stream = self.supports_streaming
         max_iterations = int(
             options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
