@@ -1,113 +1,147 @@
 # Venice AI
-Home Assistant Venice AI Conversation Integration
 
-## Overview
-The Venice AI integration allows you to enhance your Home Assistant setup with advanced conversational capabilities powered by Venice AI. This integration enables seamless interaction with your smart home devices through natural language processing.
+> [!IMPORTANT]
+> This is a fork of [grasponcrypto/venice_ai](https://github.com/grasponcrypto/venice_ai).
+> Version 2.0 differs noticeably from upstream: the client is built on the OpenAI
+> Python SDK, the conversation agent uses the Home Assistant chat log with native
+> streaming, the default model changed, the `todo` platform was removed and the
+> minimum Home Assistant version is 2025.9. See the [changelog](CHANGELOG.md) for
+> the full list.
+
+Home Assistant integration for [Venice AI](https://venice.ai): a conversation agent,
+AI Task entity, text-to-speech, speech-to-text and image generation.
 
 ## Features
-- Natural language understanding for smart home commands
-- Customizable responses based on user preferences
-- Integration with various Home Assistant components
-- Dynamic model selection from available Venice AI models
+
+- **Conversation agent** that can control Home Assistant through the Assist API,
+  with answers streamed to Assist as they are generated.
+- **AI Task entity** for `ai_task.generate_data`, including structured output.
+  Models that support JSON schemas get it natively; other models are instructed
+  through the prompt.
+- **Text-to-speech** with streaming audio and per-model voice selection.
+- **Speech-to-text** for Assist pipelines.
+- **Image generation** through the `venice_ai.generate_image` action.
+- **Diagnostic sensors** for request, error and token counters.
+- **Model capabilities from Venice**: the model selector shows privacy (E2EE, TEE,
+  private or anonymized), tool support and price per million tokens. Tools are
+  not sent to models without function calling.
+
+## Requirements
+
+- Home Assistant 2025.9 or newer.
+- A Venice AI API key.
 
 ## Installation
 
-### Option 1: HACS (Recommended)
-1. Make sure you have [HACS](https://hacs.xyz/) installed in your Home Assistant instance.
-2. Click on HACS in the sidebar.
-3. Go to "Integrations".
-4. Click the three dots in the top right corner and select "Custom repositories".
-5. Add `https://github.com/grasponcrypto/venice_ai` as a repository with category "Integration".
-6. Click "Add".
-7. Search for "Venice AI" in the integrations tab.
-8. Click "Download" and follow the installation instructions.
-9. Restart Home Assistant.
+### HACS
 
-### Option 2: Manual Installation
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/grasponcrypto/venice_ai.git
-   ```
+1. Open HACS, then the three-dot menu → **Custom repositories**.
+2. Add `https://github.com/ssh-den/venice_ai_home_assistant` with category
+   **Integration**.
+3. Search for **Venice AI**, download it and restart Home Assistant.
 
-2. **Copy the integration files:**
-   Place the `venice_ai` folder in your Home Assistant `custom_components` directory.
+### Manual
 
-3. **Restart Home Assistant:**
-   After copying the files, restart your Home Assistant instance to load the new integration.
+Copy `custom_components/venice_ai` into the `custom_components` directory of your
+Home Assistant configuration and restart Home Assistant.
 
 ## Configuration
-To configure the Venice AI integration:
 
-1. Go to Settings → Devices & Services
-2. Click "Add Integration" and search for "Venice AI"
-3. Enter your Venice AI API key
-4. Configure additional options as needed:
-   - Select your preferred model
-   - Adjust temperature, max tokens, and other parameters
-   - Customize the system prompt if desired
+1. Go to **Settings → Devices & services → Add integration** and pick **Venice AI**.
+2. Enter your API key. It is checked against Venice before the entry is created.
+3. Open **Configure** on the integration to adjust the options.
 
-## Models
+| Option | Default | Description |
+| --- | --- | --- |
+| AI model | `e2ee-deepseek-v4-flash` | Chat model for the conversation agent and AI Task. |
+| System prompt | built-in | Instructions sent with every conversation. |
+| Control Home Assistant | off | LLM APIs (for example Assist) the agent may use. |
+| Temperature / Top P / Max tokens | 1.0 / 1.0 / 512 | Sampling and answer length. |
+| Max tool iterations | 5 | Model calls allowed per turn while using tools. |
+| Disable thinking | on | Ask reasoning models to skip reasoning. |
+| Strip thinking response | on | Keep `<think>` blocks out of the spoken answer. |
+| Stream responses | on | Stream answers to Assist while they are generated. |
+| Request timeout | 120 s | Timeout for every Venice AI request. |
+| TTS voice / format / speed | `tts-kokoro → bm_daniel`, mp3, 1.0 | Text-to-speech settings. |
+| STT model / format / timestamps | `nvidia/parakeet-tdt-0.6b-v3`, json, off | Speech-to-text settings. |
+| Image model | Venice default | Model used by `venice_ai.generate_image`. |
 
-The Venice AI integration automatically filters and displays only models that support function calling, which is required for Home Assistant device control.
+Changing options reloads the entry automatically.
 
-The current default model is Llama 3.3 70B (llama-3.3-70b), which provides excellent function calling capabilities for smart home automation.
+### Choosing a model
 
-For reasoning models like Venice Reasoning (qwen-2.5-qwq-32b) or DeepSeek R1 671B, you can disable thinking for lower latency by enabling the "Disable thinking" option in the configuration.
+The default `e2ee-deepseek-v4-flash` is an inexpensive model that runs in a
+trusted execution environment and supports function calling. Pick a model tagged
+`tools` if the agent should control your home. Reasoning output from the model is
+kept as thinking content and is not spoken.
 
-## Operations
+End-to-end encrypted (E2EE) requests are not implemented yet: E2EE-capable models
+are currently used like regular private TEE models.
 
-Once the integration is configured, the following surfaces are available:
+## Actions
 
-* **Conversation agent** — A "Venice AI" agent appears in Settings → Voice Assistants → Expose, and can be selected in any Assist pipeline.
-* **AI Task entity** — `ai_task.venice_ai_<entry_id>` exposes the model as a structured-data generator for dashboards, scripts, and automations.
-* **Text-to-speech** — A `tts.venice_ai_<entry_id>` entity streams synthesized speech from Venice's audio models for use with media players and announce automations.
-* **Sensor entity** — `sensor.venice_ai_<entry_id>` reports the latest request count, token usage, and the most recent error message. Useful for dashboarding and HA statistics.
-* **Coordinator refresh** — A `venice_ai.refresh_data` action lets you trigger an immediate data refresh on demand.
+### `venice_ai.generate_image`
 
-### Reconfiguration
+| Field | Required | Description |
+| --- | --- | --- |
+| `config_entry` | yes | Venice AI entry to use. |
+| `prompt` | yes | Image description. |
+| `model` | no | Image model, defaults to the configured one. |
+| `size` | no | `auto`, `256x256` … `1792x1024`, default `1024x1024`. |
+| `quality` | no | `auto`, `low`, `medium`, `high`, `standard` or `hd`. |
+| `style` | no | `vivid` or `natural`. |
 
-Use the integration's "Configure" button to change the API key, model, temperature, max tokens, prompt, or to toggle the "Disable thinking" option for reasoning models. Changes are applied immediately without a restart; in-flight requests will complete using the previous settings.
+Returns the image `url`, plus `revised_prompt` when Venice provides one.
 
-### Removing the integration
+### `venice_ai.ai_task`
 
-From Settings → Devices & Services → Venice AI, click the three-dot menu and select "Delete". This also removes all associated entities and the AI Task / TTS entities that were created for that entry.
+| Field | Required | Description |
+| --- | --- | --- |
+| `config_entry` | yes | Venice AI entry to use. |
+| `task` | yes | Instructions for the model. |
+| `structure` | no | Description of the JSON structure to return. |
+
+Returns `conversation_id` and `data`. Prefer the built-in `ai_task.generate_data`
+action for new automations.
+
+## Entities
+
+- `conversation.venice_ai` — conversation agent for Assist pipelines.
+- `ai_task.venice_ai_ai_task` — AI Task entity.
+- `tts.venice_ai_tts` — text-to-speech.
+- `stt.venice_ai` — speech-to-text.
+- Diagnostic sensors: request count, error count, total, prompt and completion
+  tokens, last error.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Resolution |
 | --- | --- | --- |
-| `401 Unauthorized` in the log | Invalid or expired Venice AI API key | Update the key via the integration's Configure flow. |
-| `429 Rate limit exceeded` | Venice is throttling the account | Lower request concurrency, reduce prompt size, or upgrade the Venice plan. |
-| `5xx Service Unavailable` | Venice upstream incident | The integration retries with backoff; verify status on the Venice dashboard before opening an issue. |
-| `Connection refused` / `Timeout` | Network egress is blocked from Home Assistant to `api.venice.ai` | Allow outbound HTTPS to `api.venice.ai` on port 443. |
-| `No models returned` during setup | Venice account has no function-calling-capable models, or the API key is scoped too narrowly | Confirm the key has the `models:read` and `chat:write` scopes in your Venice account. |
-| Agent never responds | Selected model does not support tool calling | Pick a function-calling-capable model — the integration filters the model list to these by default. |
-| Reasoning model is very slow / verbose | Thinking tokens are being emitted alongside the answer | Enable **Disable thinking** in the integration options to skip reasoning output for faster responses. |
-| TTS produces no audio | Selected voice model is unavailable for the chosen language, or audio playback is muted on the target media player | Pick another voice model in the TTS entity options and confirm the target media player is not muted. |
+| Reauthentication requested | Invalid or revoked API key | Enter a new key in the reauthentication dialog. |
+| `Rate limit exceeded` | Venice is throttling the account | Wait, or lower the request rate. |
+| Entry stays in *setup retry* | Venice unreachable | Allow outbound HTTPS to `api.venice.ai`. |
+| Agent does not control devices | Model without function calling, or no LLM API selected | Pick a model tagged `tools` and enable **Control Home Assistant**. |
+| Answer cut off | Max tokens too low | Increase **Max tokens**. |
+| Slow reasoning model | Model emits reasoning before answering | Enable **Disable thinking**. |
 
-### Diagnostics
+Enable debug logging to investigate problems:
 
-1. Enable debug logging for this integration by adding the following to `configuration.yaml`:
-   ```yaml
-   logger:
-     default: warning
-     logs:
-       custom_components.venice_ai: debug
-   ```
-2. Restart Home Assistant and reproduce the issue.
-3. Capture the relevant log lines from `home-assistant.log` before opening an issue.
+```yaml
+logger:
+  logs:
+    custom_components.venice_ai: debug
+```
 
-### Getting help
+## Development
 
-When opening a bug report, please include:
+```bash
+uv sync
+```
 
-* Home Assistant version (`Settings → About`)
-* Integration version (visible in HACS under the Venice AI integration)
-* Relevant log lines with debug logging enabled
-* A short description of what you expected vs. what happened
-
-## Support
-If you encounter any issues or have feature requests, please open an issue on our [GitHub Issues page](https://github.com/grasponcrypto/venice_ai/issues).
+```bash
+.venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pyright && .venv/bin/pylint custom_components tests
+```
 
 ## License
-This project is licensed under the MIT License - see the LICENSE file for details.
+
+MIT, see [LICENSE](LICENSE).

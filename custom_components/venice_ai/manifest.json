@@ -1,9 +1,9 @@
 {
     "domain": "venice_ai",
     "name": "VeniceAI Conversation",
-    "version": "1.0.0",
-    "documentation": "https://github.com/grasponcrypto/venice_ai",
-    "issue_tracker": "https://github.com/grasponcrypto/venice_ai/issues",
+    "version": "2.0.0",
+    "documentation": "https://github.com/ssh-den/venice_ai_home_assistant",
+    "issue_tracker": "https://github.com/ssh-den/venice_ai_home_assistant/issues",
     "requirements": [
         "openai>=1.93.3",
         "voluptuous-openapi>=0.0.4"
@@ -22,5 +22,5 @@
     "iot_class": "cloud_polling",
     "integration_type": "service",
     "config_flow": true,
-    "homeassistant": "2025.8.0"
+    "homeassistant": "2025.9.0"
 }

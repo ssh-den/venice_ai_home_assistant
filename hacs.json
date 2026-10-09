@@ -2,5 +2,6 @@
     "name": "Venice AI",
     "content_in_root": false,
     "zip_release": false,
-    "render_readme": true
+    "render_readme": true,
+    "homeassistant": "2025.9.0"
 }

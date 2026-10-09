@@ -1,10 +1,58 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
-## [Unreleased]
+## [2.0.0] — 2026-10-09
+
+This release is published from the
+[ssh-den/venice_ai_home_assistant](https://github.com/ssh-den/venice_ai_home_assistant)
+fork and differs noticeably from upstream.
+
+### Breaking changes
+- Home Assistant 2025.9 or newer is required.
+- The default chat model is now `e2ee-deepseek-v4-flash`; entries that have not
+  saved a model in the options switch to it.
+- The `todo` platform was removed.
+- The Venice client is built on the OpenAI Python SDK, which replaces the
+  hand-written HTTP client. Retry, timeout and HTTP pool constants were removed
+  from `const.py`.
+
+### Added
+- Conversation answers are streamed to Assist as they are generated. Tool calls
+  run straight from the stream, and model reasoning is stored as thinking
+  content instead of being spoken.
+- The chat model selector shows privacy (E2EE, TEE, private, anonymized), tool
+  support and pricing reported by Venice.
+- AI Task requests native JSON schema output from models that support it.
+- `image_model` option and `model` field for `venice_ai.generate_image`; the
+  model is validated against the models Venice offers.
+- `request_timeout` and `stream_response` options, descriptions for every
+  option and missing translations.
+- Diagnostic sensors update as soon as a request finishes.
+- Tests run against a real Home Assistant instance and cover every platform.
+  black, ruff, mypy, pyright and pylint are configured in `pyproject.toml`.
+
+### Changed
+- The conversation entity relies on the Home Assistant chat log for history,
+  the system prompt, `extra_system_prompt` and tool execution.
+- Tools are not sent to models without function calling.
+- Service actions are registered in `async_setup` and check that the entry is
+  loaded.
+- The API key is validated against an authenticated endpoint, since the model
+  list is public.
+
+### Fixed
+- The `ai_task` action failed on every call.
+- The user message was added to the conversation history twice, and the system
+  prompt was sent twice.
+- Streaming chat requests were not counted in the diagnostic sensors.
+- `request_timeout` was ignored by most requests.
+- Select options lost their values in the options flow.
+- Downgraded config entries were accepted by the migration.
+
+## [1.0.0] — upstream
 
 ### Added
 - **DOC-1:** Module-level docstrings on all public client classes
@@ -62,5 +110,6 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
-[Unreleased]: https://github.com/grasponcrypto/venice_ai/compare/0.9.0...HEAD
+[2.0.0]: https://github.com/ssh-den/venice_ai_home_assistant
+[1.0.0]: https://github.com/grasponcrypto/venice_ai
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0
