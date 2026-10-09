@@ -7,11 +7,18 @@ from unittest.mock import MagicMock, patch
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.venice_ai.client import AuthenticationError, NetworkError
-from custom_components.venice_ai.const import CONF_REQUEST_TIMEOUT, DOMAIN
+from custom_components.venice_ai.const import (
+    CONF_CHAT_MODEL,
+    CONF_IMAGE_MODEL,
+    CONF_PRIVATE_MODELS_ONLY,
+    CONF_REQUEST_TIMEOUT,
+    CONF_TTS_MODEL,
+    DOMAIN,
+)
 
 
 async def test_setup_and_unload(
@@ -85,3 +92,36 @@ async def test_entity_unique_ids_are_stable(
         f"{entry_id}_stt",
         f"{entry_id}_request_count",
     } <= unique_ids
+
+
+async def test_model_issues_follow_the_model_list(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    registry = ir.async_get(hass)
+    entry_id = setup_integration.entry_id
+    hass.config_entries.async_update_entry(
+        setup_integration,
+        options={
+            CONF_PRIVATE_MODELS_ONLY: True,
+            CONF_CHAT_MODEL: "schema-model",
+            CONF_IMAGE_MODEL: "gone",
+        },
+    )
+    coordinator = setup_integration.runtime_data.coordinator
+    coordinator.async_set_updated_data(coordinator.data)
+
+    not_private = f"not_private_model_{entry_id}_{CONF_CHAT_MODEL}"
+    image_gone = f"unavailable_model_{entry_id}_{CONF_IMAGE_MODEL}"
+    assert registry.async_get_issue(DOMAIN, not_private)
+    assert registry.async_get_issue(DOMAIN, image_gone)
+    assert not registry.async_get_issue(
+        DOMAIN, f"not_private_model_{entry_id}_{CONF_TTS_MODEL}"
+    )
+
+    data = dict(coordinator.data)
+    data["text_models"] = [{"id": "schema-model", "model_spec": {"privacy": "private"}}]
+    data["image_models"] = [{"id": "gone"}]
+    coordinator.async_set_updated_data(data)
+
+    assert not registry.async_get_issue(DOMAIN, not_private)
+    assert not registry.async_get_issue(DOMAIN, image_gone)

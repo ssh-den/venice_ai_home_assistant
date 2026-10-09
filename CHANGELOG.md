@@ -17,6 +17,13 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   stay within the Venice limit of 4096 characters per request.
 - The text-to-speech and speech-to-text selectors show the privacy level of
   each model, like the chat model selector.
+- **Private models only** option: the selectors list only Private, TEE and
+  E2EE models, and a repair issue reports a configured model that Venice no
+  longer runs privately.
+- **Conversation history** option limits how many earlier messages are sent
+  with each request. The current turn is always sent.
+- Configured models are checked after every model list refresh, not only at
+  setup, and the image model is checked as well.
 - [docs/privacy.md](docs/privacy.md) describes what is sent to Venice AI and
   links the Venice privacy policy and terms of service.
 

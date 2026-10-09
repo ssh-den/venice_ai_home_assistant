@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
-from typing import Any
+from typing import Any, cast
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, Platform
@@ -17,16 +18,21 @@ from homeassistant.helpers.typing import ConfigType
 from .client import AsyncVeniceAIClient, AuthenticationError, RateLimitError
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_IMAGE_MODEL,
+    CONF_PRIVATE_MODELS_ONLY,
     CONF_REQUEST_TIMEOUT,
     CONF_STT_MODEL,
     CONF_TTS_MODEL,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_IMAGE_MODEL,
+    RECOMMENDED_PRIVATE_MODELS_ONLY,
     RECOMMENDED_REQUEST_TIMEOUT,
     RECOMMENDED_STT_MODEL,
     RECOMMENDED_TTS_MODEL,
 )
 from .coordinator import VeniceAIDataUpdateCoordinator
+from .models import is_private
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,9 +48,19 @@ PLATFORMS = [
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _ISSUE_UNAVAIL = "unavailable_model_{entry_id}_{model_key}"
+_ISSUE_NOT_PRIVATE = "not_private_model_{entry_id}_{model_key}"
 _ISSUE_AUTH = "auth_failure_{entry_id}"
 _ISSUE_API_DOWN = "api_unavailable_{entry_id}"
 _ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
+
+
+# Option, default and coordinator model list of every configurable model
+_CONFIGURED_MODELS = (
+    (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL, "text_models"),
+    (CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL, "tts_models"),
+    (CONF_STT_MODEL, RECOMMENDED_STT_MODEL, "asr_models"),
+    (CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL, "image_models"),
+)
 
 
 @dataclass
@@ -134,70 +150,61 @@ def _async_on_coordinator_update(
         )
 
 
-async def _async_create_model_issues(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Check the Venice AI configuration and create repair issues as needed."""
-    entry_id = entry.entry_id
+@callback
+def _async_check_models(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None:
+    """Report configured models that Venice no longer offers or runs without privacy."""
     options = entry.options
-    runtime_data = entry.runtime_data
-    coordinator = getattr(runtime_data, "coordinator", None)
+    data = cast(Mapping[str, list[Any]], entry.runtime_data.coordinator.data or {})
+    private_only = options.get(
+        CONF_PRIVATE_MODELS_ONLY, RECOMMENDED_PRIVATE_MODELS_ONLY
+    )
 
-    data = coordinator.data if coordinator else None
-
-    def _ids(model_type: str) -> set[str]:
-        return {
-            m.get("id", "")
-            for m in (data or {}).get(model_type, [])
-            if isinstance(m, dict)
+    for model_key, default, model_type in _CONFIGURED_MODELS:
+        model_id = options.get(model_key, default)
+        models = {
+            m.get("id"): m for m in data.get(model_type, []) if isinstance(m, dict)
         }
-
-    configured_models = {
-        CONF_CHAT_MODEL: (
-            options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
-            _ids("text_models"),
-        ),
-        CONF_TTS_MODEL: (
-            options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
-            _ids("tts_models"),
-        ),
-        CONF_STT_MODEL: (
-            options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL),
-            _ids("asr_models"),
-        ),
-    }
-
-    for model_key, (current_model, available_set) in configured_models.items():
-        if available_set and current_model not in available_set:
-            issue_id = _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=model_key)
+        checked = bool(models) and model_id != RECOMMENDED_IMAGE_MODEL
+        model = models.get(model_id)
+        placeholders = {
+            "model": model_id,
+            "model_type": model_key.replace("_model", "").upper(),
+        }
+        for issue, severity, found in (
+            (_ISSUE_UNAVAIL, IssueSeverity.ERROR, checked and model is None),
+            (
+                _ISSUE_NOT_PRIVATE,
+                IssueSeverity.WARNING,
+                private_only and model is not None and not is_private(model),
+            ),
+        ):
+            issue_id = issue.format(entry_id=entry.entry_id, model_key=model_key)
+            if not found:
+                ir.async_delete_issue(hass, DOMAIN, issue_id)
+                continue
             ir.async_create_issue(
                 hass,
                 DOMAIN,
                 issue_id,
                 is_fixable=False,
                 is_persistent=False,
-                severity=IssueSeverity.ERROR,
-                translation_key="unavailable_model",
-                translation_placeholders={
-                    "model": current_model,
-                    "model_type": model_key.replace("_model", "").upper(),
-                },
+                severity=severity,
+                translation_key=issue.split("_{", 1)[0],
+                translation_placeholders=placeholders,
             )
-            _LOGGER.warning(
-                "Created repair issue for unavailable model %s (%s) in entry %s",
-                current_model,
-                model_key,
-                entry_id,
-            )
+            _LOGGER.warning("Model %s (%s): %s", model_id, model_key, issue_id)
 
 
 async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Set up repair issues for a config entry."""
-    await _async_create_model_issues(hass, entry)
+    _async_check_models(hass, entry)
 
     coordinator = entry.runtime_data.coordinator
 
     @callback
     def _on_coordinator_update() -> None:
         _async_on_coordinator_update(hass, entry, coordinator)
+        _async_check_models(hass, entry)
 
     entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
 
@@ -207,9 +214,11 @@ async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
     entry_id = entry.entry_id
     registry = ir.async_get(hass)
     issues = [
-        _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_CHAT_MODEL),
-        _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_TTS_MODEL),
-        _ISSUE_UNAVAIL.format(entry_id=entry_id, model_key=CONF_STT_MODEL),
+        *(
+            issue.format(entry_id=entry_id, model_key=model_key)
+            for issue in (_ISSUE_UNAVAIL, _ISSUE_NOT_PRIVATE)
+            for model_key, _, _ in _CONFIGURED_MODELS
+        ),
         _ISSUE_AUTH.format(entry_id=entry_id),
         _ISSUE_API_DOWN.format(entry_id=entry_id),
         _ISSUE_RATE_LIMIT.format(entry_id=entry_id),

@@ -21,9 +21,10 @@ import voluptuous as vol
 from custom_components.venice_ai.client import RateLimitError
 from custom_components.venice_ai.const import (
     CONF_CHAT_MODEL,
+    CONF_MAX_HISTORY_MESSAGES,
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
-    MAX_API_MESSAGES,
+    RECOMMENDED_MAX_HISTORY_MESSAGES,
 )
 from custom_components.venice_ai.conversation import (
     _fallback_text,
@@ -244,20 +245,50 @@ async def test_streaming_answer(
 
 
 def test_trim_keeps_system_and_drops_orphan_tool_results() -> None:
+    limit = RECOMMENDED_MAX_HISTORY_MESSAGES
     system = [{"role": "system", "content": "s"}]
     rest: list[dict[str, Any]] = [
-        {"role": "user", "content": str(i)} for i in range(MAX_API_MESSAGES)
+        {"role": "user", "content": str(i)} for i in range(limit)
     ]
     rest.insert(1, {"role": "tool", "content": "orphan"})
-    trimmed = _trim_api_messages(system + rest)
+    trimmed = _trim_api_messages(system + rest, limit)
     assert trimmed[0] == system[0]
     assert trimmed[1]["role"] != "tool"
-    assert len(trimmed) <= MAX_API_MESSAGES + 1
+    assert len(trimmed) <= limit + 1
 
 
 def test_trim_noop_for_short_conversations() -> None:
     messages = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
-    assert _trim_api_messages(messages) == messages
+    assert _trim_api_messages(messages, 1) == messages
+
+
+def test_trim_always_keeps_the_current_turn() -> None:
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "earlier"},
+        {"role": "assistant", "content": "answer"},
+        {"role": "user", "content": "now"},
+        {"role": "assistant", "tool_calls": [{"id": "1"}]},
+        {"role": "tool", "content": "result"},
+    ]
+    assert _trim_api_messages(messages, 1) == [messages[0], *messages[3:]]
+    assert _trim_api_messages(messages, 4) == [messages[0], *messages[2:]]
+
+
+async def test_history_option_limits_messages(
+    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
+) -> None:
+    hass.config_entries.async_update_entry(
+        setup_integration,
+        options={CONF_MAX_HISTORY_MESSAGES: 1, CONF_STREAM_RESPONSE: False},
+    )
+    await hass.async_block_till_done()
+    first = await _converse(hass, "One")
+    await _converse(hass, "Two", conversation_id=first.conversation_id)
+
+    sent = _sent_messages(mock_client)
+    assert [m["role"] for m in sent] == ["system", "user"]
+    assert sent[-1]["content"] == "Two"
 
 
 @pytest.mark.parametrize(

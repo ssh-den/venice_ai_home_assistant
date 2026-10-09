@@ -62,6 +62,8 @@ Home Assistant configuration and restart Home Assistant.
 | Control Home Assistant | off, the form suggests Assist | LLM APIs the agent may use. |
 | Temperature / Top P / Max tokens | 1.0 / 1.0 / 512 | Sampling and answer length. |
 | Max tool iterations | 5 | Model calls allowed per turn while using tools. |
+| Conversation history | 50 | Earlier messages sent with each request; the current question is always sent. |
+| Private models only | off | List and accept only Private, TEE and E2EE models. |
 | Disable thinking | on | Ask reasoning models to skip reasoning. |
 | Strip thinking response | on | Keep `<think>` blocks out of the spoken answer. |
 | Stream responses | on | Stream answers to Assist while they are generated. |

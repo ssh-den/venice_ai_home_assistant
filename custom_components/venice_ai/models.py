@@ -30,6 +30,18 @@ def _spec(data: Mapping[str, Any]) -> Mapping[str, Any]:
     return spec if isinstance(spec, Mapping) else {}
 
 
+def is_private(data: Mapping[str, Any]) -> bool:
+    """Whether Venice keeps the prompts of a model away from third-party providers."""
+    spec = _spec(data)
+    privacy = spec.get("privacy")
+    if isinstance(privacy, str) and privacy.lower() in ("private", "tee", "e2ee"):
+        return True
+    caps = spec.get("capabilities")
+    return isinstance(caps, Mapping) and (
+        caps.get("supportsTeeAttestation") is True or caps.get("supportsE2EE") is True
+    )
+
+
 def privacy_label(data: Mapping[str, Any]) -> str | None:
     """Return the privacy level Venice reports for a model, for display."""
     privacy = _spec(data).get("privacy")

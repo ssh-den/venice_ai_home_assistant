@@ -20,14 +20,15 @@ from . import VeniceAIConfigEntry
 from .client import RateLimitError, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_MAX_HISTORY_MESSAGES,
     CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
     DEFAULT_SYSTEM_PROMPT,
     DOMAIN,
-    MAX_API_MESSAGES,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_MAX_HISTORY_MESSAGES,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_STRIP_THINKING_RESPONSE,
@@ -75,12 +76,14 @@ def _format_tool(
     return {"type": "function", "function": function}
 
 
-def _trim_api_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Limit the API payload to the leading system messages plus the most
-    recent MAX_API_MESSAGES conversation messages.
+def _trim_api_messages(
+    messages: list[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Keep the leading system messages and the last ``limit`` messages.
 
-    The tail never starts with a tool result, since the API rejects tool
-    messages without their preceding assistant tool call.
+    The current turn, from the last user message on, is always kept. The tail
+    never starts with a tool result, since the API rejects tool messages
+    without their preceding assistant tool call.
     """
     system = []
     for message in messages:
@@ -88,16 +91,21 @@ def _trim_api_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             break
         system.append(message)
     rest = messages[len(system) :]
-    if len(rest) <= MAX_API_MESSAGES:
-        return messages
-
-    tail = rest[-MAX_API_MESSAGES:]
-    while tail and tail[0].get("role") == "tool":
-        tail.pop(0)
-    _LOGGER.debug(
-        "Trimmed API messages from %d to %d", len(messages), len(system) + len(tail)
+    last_user = max(
+        (i for i, message in enumerate(rest) if message.get("role") == "user"),
+        default=0,
     )
-    return system + tail
+    start = min(max(len(rest) - limit, 0), last_user)
+    while start < last_user and rest[start].get("role") == "tool":
+        start += 1
+    if not start:
+        return messages
+    _LOGGER.debug(
+        "Trimmed API messages from %d to %d",
+        len(messages),
+        len(messages) - start,
+    )
+    return system + rest[start:]
 
 
 def _parse_tool_calls(
@@ -256,6 +264,9 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         max_iterations = int(
             options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
         )
+        max_history = int(
+            options.get(CONF_MAX_HISTORY_MESSAGES, RECOMMENDED_MAX_HISTORY_MESSAGES)
+        )
 
         model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         info = get_chat_model_info(self.entry, model)
@@ -270,7 +281,9 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         params = chat_parameters(options, model, tools=tools)
 
         for iteration in range(max_iterations):
-            messages = _trim_api_messages(chat_log_to_messages(chat_log, strip))
+            messages = _trim_api_messages(
+                chat_log_to_messages(chat_log, strip), max_history
+            )
             outcome = StreamOutcome()
             started = time.monotonic()
             async for _content in chat_log.async_add_delta_content_stream(

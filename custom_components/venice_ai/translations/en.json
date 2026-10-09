@@ -39,6 +39,8 @@
           "strip_thinking_response": "Strip thinking response (for reasoning models)",
           "disable_thinking": "Disable thinking (for reasoning models)",
           "max_tool_iterations": "Max Tool Iterations",
+          "max_history_messages": "Conversation history",
+          "private_models_only": "Private models only",
           "tts_model_voice": "TTS Voice (Model → Voice)",
           "tts_speed": "TTS Speed",
           "stt_model": "STT Model",
@@ -57,6 +59,8 @@
           "disable_thinking": "Ask reasoning models to skip the thinking phase for faster, cheaper answers.",
           "stream_response": "Receive the answer incrementally, which lowers the time to the first words.",
           "max_tool_iterations": "How many rounds of Home Assistant tool calls the model may make per request.",
+          "max_history_messages": "How many earlier messages of the conversation are sent with each request. The current question is always sent. Fewer messages send less of the conversation to Venice AI.",
+          "private_models_only": "Offer only models that Venice AI runs privately, in a TEE or with E2EE, so prompts and audio are not passed to providers that may keep them. Reopen the options after changing this to see the filtered lists.",
           "tts_model_voice": "Text-to-speech model and voice. Type a model name to filter the list. Kokoro voices are grouped by language; pick another model for languages Kokoro does not speak.",
           "tts_speed": "Playback speed of generated speech.",
           "stt_model": "Speech-to-text model used to transcribe voice commands. Parakeet covers European languages, Whisper-based models almost every language.",
@@ -73,12 +77,18 @@
       "top_p_out_of_range": "Top P must be between 0 and 1.",
       "temperature_out_of_range": "Temperature must be between 0 and 2.",
       "max_tool_iterations_out_of_range": "Max tool iterations must be between 1 and 20.",
+      "max_history_messages_out_of_range": "Conversation history must be between 1 and 100 messages.",
+      "model_not_private": "Venice AI does not run this model privately. Pick a Private, TEE or E2EE model, or turn off Private models only.",
       "tts_speed_out_of_range": "TTS speed must be between 0.25 and 4.",
       "request_timeout_out_of_range": "Request timeout must be between 10 and 300 seconds.",
       "prompt_must_be_string": "The system prompt must be text."
     }
   },
   "issues": {
+    "not_private_model": {
+      "title": "Venice AI {model_type} model is not private",
+      "description": "Private models only is on, but Venice AI no longer runs the model {model} privately. Pick a Private, TEE or E2EE model in the integration options."
+    },
     "unavailable_model": {
       "title": "Unavailable Venice AI {model_type} model",
       "description": "The model {model} is no longer available from Venice AI. Please update your integration settings to select a supported model."

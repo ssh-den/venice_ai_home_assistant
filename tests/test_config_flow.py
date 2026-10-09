@@ -20,6 +20,7 @@ from custom_components.venice_ai.config_flow import VeniceAIOptionsFlow
 from custom_components.venice_ai.const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
+    CONF_PRIVATE_MODELS_ONLY,
     CONF_STT_MODEL,
     CONF_TTS_MODEL,
     CONF_TTS_VOICE,
@@ -151,3 +152,52 @@ async def test_options_fields_are_translated(
 def test_english_translation_matches_strings() -> None:
     english = json.loads((COMPONENT_DIR / "translations" / "en.json").read_text())
     assert english == STRINGS
+
+
+async def test_private_models_only_filters_selectors(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    hass.config_entries.async_update_entry(
+        setup_integration, options={CONF_PRIVATE_MODELS_ONLY: True}
+    )
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    schema = result["data_schema"]
+    assert schema is not None
+    selectors = {str(key): value for key, value in schema.schema.items()}
+
+    def values(key: str) -> set[str]:
+        return {o["value"] for o in selectors[key].config["options"]}
+
+    assert values(CONF_CHAT_MODEL) == {RECOMMENDED_CHAT_MODEL}
+    assert "tts-wav-only → tara" not in values("tts_model_voice")
+    assert values(CONF_STT_MODEL) == {RECOMMENDED_STT_MODEL}
+
+
+async def test_private_models_only_rejects_anonymized_models(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PRIVATE_MODELS_ONLY: True,
+            CONF_CHAT_MODEL: "schema-model",
+            "tts_model_voice": "tts-wav-only → tara",
+        },
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {
+        CONF_CHAT_MODEL: "model_not_private",
+        "tts_model_voice": "model_not_private",
+    }
+    assert "model_not_private" in STRINGS["options"]["error"]
+
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_PRIVATE_MODELS_ONLY: True,
+            CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
+            "tts_model_voice": "tts-kokoro → af_heart",
+        },
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY

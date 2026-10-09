@@ -53,8 +53,13 @@ RECOMMENDED_STT_MODEL = "nvidia/parakeet-tdt-0.6b-v3"
 # Conversation tool iteration limit
 CONF_MAX_TOOL_ITERATIONS = "max_tool_iterations"
 RECOMMENDED_MAX_TOOL_ITERATIONS = 5
-# Maximum number of conversation messages sent to the API per request
-MAX_API_MESSAGES = 50
+# Earlier conversation messages sent with a request; the current turn is always sent
+CONF_MAX_HISTORY_MESSAGES = "max_history_messages"
+RECOMMENDED_MAX_HISTORY_MESSAGES = 50
+
+# Offer and accept only models that Venice runs privately, in a TEE or with E2EE
+CONF_PRIVATE_MODELS_ONLY = "private_models_only"
+RECOMMENDED_PRIVATE_MODELS_ONLY = False
 
 
 # Maximum audio buffer size for STT to prevent memory spikes (10 MB).

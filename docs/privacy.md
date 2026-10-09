@@ -8,7 +8,7 @@ about the data it receives.
 
 | Feature | Sent to Venice |
 | --- | --- |
-| Conversation agent | The system prompt, the conversation so far (up to the last 50 messages), and, when **Control Home Assistant** is on, the names, areas and states of the entities exposed to Assist, the available tools and their results. |
+| Conversation agent | The system prompt, the conversation so far (the last 50 messages unless **Conversation history** is lower), and, when **Control Home Assistant** is on, the names, areas and states of the entities exposed to Assist, the available tools and their results. |
 | AI Task | The task instructions and the requested structure. |
 | Speech-to-text | The recorded voice command as WAV audio and the pipeline language. |
 | Text-to-speech | The text to speak, the voice, the speed and, for some models, the language. |
@@ -37,6 +37,10 @@ sent.
 The model selectors show the privacy level Venice reports for each chat,
 text-to-speech and speech-to-text model. Prefer **Private**, **TEE** or **E2EE**
 models when the conversation or the voice commands are sensitive.
+
+With **Private models only** on, the selectors list only Private, TEE and E2EE
+models and refuse others. If Venice later lowers the privacy of a configured
+model, Home Assistant shows a repair issue.
 
 - **Anonymized**: Venice hides your identity from the model provider, but the
   provider processes the prompt under its own policies.

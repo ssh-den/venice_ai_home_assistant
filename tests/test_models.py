@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from custom_components.venice_ai.languages import MULTILINGUAL
@@ -9,6 +11,7 @@ from custom_components.venice_ai.models import (
     ModelInfo,
     TTSModel,
     find_model,
+    is_private,
     parse_models,
     parse_tts_models,
 )
@@ -118,3 +121,20 @@ def test_parse_tts_models() -> None:
         "spec": ("a",),
         "legacy": ("b",),
     }
+
+
+@pytest.mark.parametrize(
+    ("spec", "private"),
+    [
+        ({"privacy": "private"}, True),
+        ({"privacy": "anonymized"}, False),
+        (
+            {"privacy": "anonymized", "capabilities": {"supportsTeeAttestation": True}},
+            True,
+        ),
+        ({"capabilities": {"supportsE2EE": True}}, True),
+        ({}, False),
+    ],
+)
+def test_is_private(spec: dict[str, Any], private: bool) -> None:
+    assert is_private({"id": "m", "model_spec": spec}) is private
