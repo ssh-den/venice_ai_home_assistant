@@ -15,6 +15,7 @@ from homeassistant.components.tts import (
     Voice,
 )
 from homeassistant.components.tts.entity import TTSAudioRequest
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
@@ -28,8 +29,9 @@ from .const import (
     RECOMMENDED_TTS_MODEL,
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
+    SUBENTRY_TTS,
 )
-from .entity import device_info
+from .entity import VeniceAIEntity, subentries_of
 from .languages import MULTILINGUAL, tts_language_hint
 from .models import TTSModel, get_tts_model
 
@@ -41,8 +43,11 @@ async def async_setup_entry(
     entry: VeniceAIConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Venice AI TTS platform."""
-    async_add_entities([VeniceAITTS(entry)])
+    """Set up a text-to-speech entity for each TTS subentry."""
+    for subentry in subentries_of(entry, SUBENTRY_TTS):
+        async_add_entities(
+            [VeniceAITTS(entry, subentry)], config_subentry_id=subentry.subentry_id
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,24 +61,21 @@ class _Request:
     language: str | None
 
 
-class VeniceAITTS(TextToSpeechEntity):
+class VeniceAITTS(TextToSpeechEntity, VeniceAIEntity):
     """Venice AI TTS entity."""
 
-    _attr_has_entity_name = True
-    _attr_name = "TTS"
-
-    def __init__(self, entry: VeniceAIConfigEntry) -> None:
+    def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize TTS entity."""
-        self.entry = entry
+        super().__init__(
+            entry, subentry, subentry.data.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL)
+        )
         self._client = entry.runtime_data.client
-        self._attr_unique_id = f"{entry.entry_id}_tts"
-        self._attr_device_info = device_info(entry)
         self._attr_supported_options = [ATTR_VOICE, CONF_TTS_MODEL, CONF_TTS_SPEED]
 
     def _model(self, model_id: str | None = None) -> TTSModel | None:
         return get_tts_model(
             self.entry,
-            model_id or self.entry.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
+            model_id or self.options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),
         )
 
     @property
@@ -90,8 +92,8 @@ class VeniceAITTS(TextToSpeechEntity):
 
     @property
     def default_options(self) -> dict[str, Any]:
-        """Return default options mapped from config entry."""
-        options = self.entry.options
+        """Return the voice, model and speed of the subentry."""
+        options = self.options
         return {
             ATTR_VOICE: options.get(CONF_TTS_VOICE, RECOMMENDED_TTS_VOICE),
             CONF_TTS_MODEL: options.get(CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL),

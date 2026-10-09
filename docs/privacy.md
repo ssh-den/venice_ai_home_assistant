@@ -8,7 +8,7 @@ about the data it receives.
 
 | Feature | Sent to Venice |
 | --- | --- |
-| Conversation agent | The system prompt, the conversation so far (the last 50 messages unless **Conversation history** is lower), and, when **Control Home Assistant** is on, the names, areas and states of the entities exposed to Assist, the available tools and their results. |
+| Conversation agent | The instructions, the conversation so far (the last 50 messages unless **Conversation history** is lower), and, when **Control Home Assistant** is on, the names, areas and states of the entities exposed to Assist, the available tools and their results. |
 | AI Task | The task instructions and the requested structure. |
 | Speech-to-text | The recorded voice command as WAV audio and the pipeline language. |
 | Text-to-speech | The text to speak, the voice, the speed and, for some models, the language. |
@@ -18,6 +18,12 @@ about the data it receives.
 Which entities the agent can see is controlled by Home Assistant under
 **Settings → Voice assistants → Expose**. Entities that are not exposed are not
 sent.
+
+The integration adds no instructions of its own: the model receives the
+instructions from the settings, the prompt Home Assistant builds for the
+selected APIs and, for AI Tasks with a structure on models without structured
+output, the **Structured output instructions**. Venice adds its own system
+prompt only when **Venice system prompt** is on.
 
 ## What stays in Home Assistant
 
@@ -35,12 +41,12 @@ sent.
 ## Privacy levels of Venice models
 
 The model selectors show the privacy level Venice reports for each chat,
-text-to-speech and speech-to-text model. Prefer **Private**, **TEE** or **E2EE**
-models when the conversation or the voice commands are sensitive.
+text-to-speech and speech-to-text model. Prefer **Private** or **TEE** models
+when the conversation or the voice commands are sensitive.
 
-With **Private models only** on, the selectors list only Private, TEE and E2EE
-models and refuse others. If Venice later lowers the privacy of a configured
-model, Home Assistant shows a repair issue.
+With **Private models only** on, the selectors list only Private and TEE models.
+A repair issue reports services that use other models, including models whose
+privacy Venice lowers later.
 
 - **Anonymized**: Venice hides your identity from the model provider, but the
   provider processes the prompt under its own policies.
@@ -48,7 +54,7 @@ model, Home Assistant shows a repair issue.
   not keep it. This rests on contracts.
 - **TEE**: inference runs in an attested hardware enclave.
 - **E2EE**: the client encrypts the prompt so that only the enclave can read
-  it. The integration does not implement this yet, so E2EE-capable models are
+  it. The integration does not implement this, so E2EE-capable models are
   used like TEE models.
 
 TEE and E2EE are available for text models only; speech models are either

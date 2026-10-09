@@ -15,17 +15,18 @@ from .const import (
     CONF_DISABLE_THINKING,
     CONF_MAX_TOKENS,
     CONF_TEMPERATURE,
+    CONF_THINKING_TAGS,
     CONF_TOP_P,
+    CONF_VENICE_SYSTEM_PROMPT,
     RECOMMENDED_DISABLE_THINKING,
     RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_THINKING_TAGS,
     RECOMMENDED_TOP_P,
+    RECOMMENDED_VENICE_SYSTEM_PROMPT,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-_THINK_OPEN = "<think>"
-_THINK_CLOSE = "</think>"
 
 
 @dataclass
@@ -60,17 +61,29 @@ def chat_parameters(
         temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
         top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
         tools=tools,
-        venice_parameters=(
-            {"disable_thinking": True}
-            if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
-            else None
-        ),
+        venice_parameters={
+            "include_venice_system_prompt": bool(
+                options.get(CONF_VENICE_SYSTEM_PROMPT, RECOMMENDED_VENICE_SYSTEM_PROMPT)
+            ),
+            **(
+                {"disable_thinking": True}
+                if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
+                else {}
+            ),
+        },
         response_format=response_format,
     )
 
 
+def thinking_tags(options: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the configured names of the tags that wrap reasoning."""
+    value = str(options.get(CONF_THINKING_TAGS, RECOMMENDED_THINKING_TAGS))
+    names = (name.strip(" <>/").lower() for name in value.split(","))
+    return tuple(dict.fromkeys(name for name in names if name))
+
+
 def _convert_content(
-    content: conversation.Content, strip_thinking_output: bool
+    content: conversation.Content, tags: tuple[str, ...]
 ) -> dict[str, Any] | None:
     """Convert one chat log entry to a Venice AI chat message."""
     if isinstance(content, conversation.SystemContent):
@@ -84,9 +97,7 @@ def _convert_content(
             "content": json.dumps(content.tool_result),
         }
     if isinstance(content, conversation.AssistantContent):
-        text = content.content or ""
-        if strip_thinking_output:
-            text = strip_thinking(text)
+        text = strip_thinking(content.content or "", tags)
         message: dict[str, Any] = {"role": "assistant", "content": text}
         if content.tool_calls:
             message["tool_calls"] = [
@@ -106,12 +117,12 @@ def _convert_content(
 
 
 def chat_log_to_messages(
-    chat_log: conversation.ChatLog, strip_thinking_output: bool
+    chat_log: conversation.ChatLog, tags: tuple[str, ...]
 ) -> list[dict[str, Any]]:
-    """Convert the Home Assistant chat log into Venice AI chat messages."""
+    """Convert the chat log into chat messages, removing reasoning in ``tags``."""
     messages = []
     for content in chat_log.content:
-        if (message := _convert_content(content, strip_thinking_output)) is not None:
+        if (message := _convert_content(content, tags)) is not None:
             messages.append(message)
     return messages
 
@@ -124,16 +135,28 @@ class StreamOutcome:
 
 
 class ThinkingFilter:
-    """Split streamed text into answer and <think>...</think> reasoning.
+    """Split streamed text into answer and reasoning wrapped in the given tags.
 
     Tags may be split across chunks, so a possible tag prefix is held back
     until the next chunk arrives.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, tags: tuple[str, ...]) -> None:
         """Initialize the filter outside a thinking block."""
+        self._closing = {f"<{tag}>": f"</{tag}>" for tag in tags}
+        self._close: str | None = None
         self._buffer = ""
-        self._thinking = False
+
+    def _next_tag(self, text: str) -> tuple[int, str] | None:
+        if self._close is not None:
+            index = text.find(self._close)
+            return (index, self._close) if index != -1 else None
+        found = [(i, tag) for tag in self._closing if (i := text.find(tag)) != -1]
+        return min(found) if found else None
+
+    def _held_back(self, text: str) -> int:
+        tags = [self._close] if self._close is not None else list(self._closing)
+        return max((_partial_tag_length(text, tag) for tag in tags), default=0)
 
     def feed(self, text: str) -> tuple[str, str]:
         """Return the (answer, thinking) text that can be emitted so far."""
@@ -141,15 +164,15 @@ class ThinkingFilter:
         answer: list[str] = []
         thinking: list[str] = []
         while self._buffer:
-            tag = _THINK_CLOSE if self._thinking else _THINK_OPEN
-            out = thinking if self._thinking else answer
-            index = self._buffer.lower().find(tag)
-            if index != -1:
+            out = answer if self._close is None else thinking
+            found = self._next_tag(self._buffer.lower())
+            if found is not None:
+                index, tag = found
                 out.append(self._buffer[:index])
                 self._buffer = self._buffer[index + len(tag) :]
-                self._thinking = not self._thinking
+                self._close = self._closing[tag] if self._close is None else None
                 continue
-            keep = _partial_tag_length(self._buffer, tag)
+            keep = self._held_back(self._buffer)
             out.append(self._buffer[: len(self._buffer) - keep])
             self._buffer = self._buffer[len(self._buffer) - keep :]
             break
@@ -158,7 +181,7 @@ class ThinkingFilter:
     def flush(self) -> tuple[str, str]:
         """Return whatever text is still held back."""
         rest, self._buffer = self._buffer, ""
-        return ("", rest) if self._thinking else (rest, "")
+        return (rest, "") if self._close is None else ("", rest)
 
 
 def _partial_tag_length(text: str, tag: str) -> int:
@@ -299,25 +322,16 @@ def extract_json(text: str) -> Any:
     return json.loads(cleaned)
 
 
-def strip_thinking(text: str) -> str:
-    """Remove <think>...</think> blocks from model output.
+def strip_thinking(text: str, tags: tuple[str, ...]) -> str:
+    """Remove reasoning wrapped in ``tags`` from model output.
 
     Also drops a leading reasoning section that ends with the literal
     ' end of thinking' marker emitted by some Venice AI models.
     """
-    if not text:
+    if not text or not tags:
         return text
-    # XML-style <think>...</think>
-    while True:
-        start = text.lower().find("<think>")
-        if start == -1:
-            break
-        end = text.lower().find("</think>", start)
-        if end == -1:
-            # unmatched open tag - strip to end to be safe
-            text = text[:start].strip()
-            break
-        text = text[:start] + text[end + 8 :]
+    thinking_filter = ThinkingFilter(tags)
+    text = thinking_filter.feed(text)[0] + thinking_filter.flush()[0]
     if text.lstrip().lower().startswith("thinking"):
         _head, marker, tail = text.partition(" end of thinking")
         if marker:

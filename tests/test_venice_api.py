@@ -7,6 +7,11 @@ from typing import Any
 import pytest
 
 from custom_components.venice_ai import venice_api
+from custom_components.venice_ai.const import (
+    CONF_DISABLE_THINKING,
+    CONF_THINKING_TAGS,
+    CONF_VENICE_SYSTEM_PROMPT,
+)
 from custom_components.venice_ai.venice_api import (
     ChatParameters,
     StreamOutcome,
@@ -16,9 +21,11 @@ from custom_components.venice_ai.venice_api import (
 
 from .conftest import FakeChunk
 
+THINK = ("think",)
 
-def _feed_all(parts: list[str]) -> tuple[str, str]:
-    thinking_filter = ThinkingFilter()
+
+def _feed_all(parts: list[str], tags: tuple[str, ...] = THINK) -> tuple[str, str]:
+    thinking_filter = ThinkingFilter(tags)
     results = [thinking_filter.feed(part) for part in parts]
     results.append(thinking_filter.flush())
     return "".join(a for a, _ in results), "".join(t for _, t in results)
@@ -40,8 +47,40 @@ def test_thinking_filter(parts: list[str], expected: tuple[str, str]) -> None:
     assert _feed_all(parts) == expected
 
 
+def test_thinking_filter_with_custom_tags() -> None:
+    tags = ("thought", "reasoning")
+    assert _feed_all(["<thought>a</thought>b<reason", "ing>c</reasoning>d"], tags) == (
+        "bd",
+        "ac",
+    )
+    assert _feed_all(["<think>kept</think>"], tags) == ("<think>kept</think>", "")
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("think", ("think",)),
+        ("<think>, Thought , ,think", ("think", "thought")),
+        ("", ()),
+    ],
+)
+def test_thinking_tags(value: str, expected: tuple[str, ...]) -> None:
+    assert venice_api.thinking_tags({CONF_THINKING_TAGS: value}) == expected
+
+
+def test_chat_parameters_venice_system_prompt() -> None:
+    assert venice_api.chat_parameters({}, "m").venice_parameters == {
+        "include_venice_system_prompt": False,
+        "disable_thinking": True,
+    }
+    params = venice_api.chat_parameters(
+        {CONF_VENICE_SYSTEM_PROMPT: True, CONF_DISABLE_THINKING: False}, "m"
+    )
+    assert params.venice_parameters == {"include_venice_system_prompt": True}
+
+
 def test_thinking_filter_holds_back_partial_tag() -> None:
-    thinking_filter = ThinkingFilter()
+    thinking_filter = ThinkingFilter(THINK)
     assert thinking_filter.feed("Hi <thi") == ("Hi ", "")
     assert thinking_filter.feed("nk>secret") == ("", "secret")
 
@@ -246,4 +285,8 @@ async def test_chat_deltas_invalid_response(make_client: Any) -> None:
     ],
 )
 def test_strip_thinking(text: str, expected: str) -> None:
-    assert venice_api.strip_thinking(text) == expected
+    assert venice_api.strip_thinking(text, THINK) == expected
+
+
+def test_strip_thinking_without_tags() -> None:
+    assert venice_api.strip_thinking(" <think>x</think> ", ()) == " <think>x</think> "

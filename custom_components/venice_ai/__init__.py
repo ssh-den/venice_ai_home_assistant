@@ -5,12 +5,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 import logging
+from types import MappingProxyType
 from typing import Any, cast
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_API_KEY, Platform
+from homeassistant.config_entries import ConfigEntry, ConfigSubentry
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, Platform
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import config_validation as cv, issue_registry as ir
+from homeassistant.helpers import (
+    config_validation as cv,
+    entity_registry as er,
+    issue_registry as ir,
+)
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.issue_registry import IssueSeverity
 from homeassistant.helpers.typing import ConfigType
@@ -18,18 +23,42 @@ from homeassistant.helpers.typing import ConfigType
 from .client import AsyncVeniceAIClient, AuthenticationError, RateLimitError
 from .const import (
     CONF_CHAT_MODEL,
+    CONF_DISABLE_THINKING,
     CONF_IMAGE_MODEL,
+    CONF_MAX_HISTORY_MESSAGES,
+    CONF_MAX_TOKENS,
+    CONF_MAX_TOOL_ITERATIONS,
     CONF_PRIVATE_MODELS_ONLY,
+    CONF_PROMPT,
+    CONF_RECOMMENDED,
     CONF_REQUEST_TIMEOUT,
+    CONF_STREAM_RESPONSE,
+    CONF_STRIP_THINKING_RESPONSE,
     CONF_STT_MODEL,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
     CONF_TTS_MODEL,
+    CONF_TTS_SPEED,
+    CONF_TTS_VOICE,
+    DEFAULT_AI_TASK_NAME,
+    DEFAULT_CONVERSATION_NAME,
+    DEFAULT_STT_NAME,
+    DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_TTS_NAME,
     DOMAIN,
+    RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_IMAGE_MODEL,
     RECOMMENDED_PRIVATE_MODELS_ONLY,
     RECOMMENDED_REQUEST_TIMEOUT,
     RECOMMENDED_STT_MODEL,
+    RECOMMENDED_STT_OPTIONS,
     RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_OPTIONS,
+    SUBENTRY_AI_TASK,
+    SUBENTRY_CONVERSATION,
+    SUBENTRY_STT,
+    SUBENTRY_TTS,
 )
 from .coordinator import VeniceAIDataUpdateCoordinator
 from .models import is_private
@@ -47,20 +76,19 @@ PLATFORMS = [
 
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
-_ISSUE_UNAVAIL = "unavailable_model_{entry_id}_{model_key}"
-_ISSUE_NOT_PRIVATE = "not_private_model_{entry_id}_{model_key}"
+_ISSUE_UNAVAIL = "unavailable_model_{entry_id}_{target}"
+_ISSUE_NOT_PRIVATE = "not_private_model_{entry_id}_{target}"
 _ISSUE_AUTH = "auth_failure_{entry_id}"
 _ISSUE_API_DOWN = "api_unavailable_{entry_id}"
 _ISSUE_RATE_LIMIT = "rate_limited_{entry_id}"
 
-
-# Option, default and coordinator model list of every configurable model
-_CONFIGURED_MODELS = (
-    (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL, "text_models"),
-    (CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL, "tts_models"),
-    (CONF_STT_MODEL, RECOMMENDED_STT_MODEL, "asr_models"),
-    (CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL, "image_models"),
-)
+# Model option, default and coordinator model list of each subentry type
+_SUBENTRY_MODELS = {
+    SUBENTRY_CONVERSATION: (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL, "text_models"),
+    SUBENTRY_AI_TASK: (CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL, "text_models"),
+    SUBENTRY_TTS: (CONF_TTS_MODEL, RECOMMENDED_TTS_MODEL, "tts_models"),
+    SUBENTRY_STT: (CONF_STT_MODEL, RECOMMENDED_STT_MODEL, "asr_models"),
+}
 
 
 @dataclass
@@ -153,32 +181,34 @@ def _async_on_coordinator_update(
 @callback
 def _async_check_models(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None:
     """Report configured models that Venice no longer offers or runs without privacy."""
-    options = entry.options
     data = cast(Mapping[str, list[Any]], entry.runtime_data.coordinator.data or {})
-    private_only = options.get(
+    private_only = entry.options.get(
         CONF_PRIVATE_MODELS_ONLY, RECOMMENDED_PRIVATE_MODELS_ONLY
     )
+    targets = [
+        (subentry.subentry_id, subentry.title, subentry.data.get(key, default), kind)
+        for subentry in entry.subentries.values()
+        if subentry.subentry_type in _SUBENTRY_MODELS
+        for key, default, kind in [_SUBENTRY_MODELS[subentry.subentry_type]]
+    ]
+    image_model = entry.options.get(CONF_IMAGE_MODEL, RECOMMENDED_IMAGE_MODEL)
+    if image_model != RECOMMENDED_IMAGE_MODEL:
+        targets.append((CONF_IMAGE_MODEL, entry.title, image_model, "image_models"))
 
-    for model_key, default, model_type in _CONFIGURED_MODELS:
-        model_id = options.get(model_key, default)
+    for target, name, model_id, model_type in targets:
         models = {
             m.get("id"): m for m in data.get(model_type, []) if isinstance(m, dict)
         }
-        checked = bool(models) and model_id != RECOMMENDED_IMAGE_MODEL
         model = models.get(model_id)
-        placeholders = {
-            "model": model_id,
-            "model_type": model_key.replace("_model", "").upper(),
-        }
         for issue, severity, found in (
-            (_ISSUE_UNAVAIL, IssueSeverity.ERROR, checked and model is None),
+            (_ISSUE_UNAVAIL, IssueSeverity.ERROR, bool(models) and model is None),
             (
                 _ISSUE_NOT_PRIVATE,
                 IssueSeverity.WARNING,
                 private_only and model is not None and not is_private(model),
             ),
         ):
-            issue_id = issue.format(entry_id=entry.entry_id, model_key=model_key)
+            issue_id = issue.format(entry_id=entry.entry_id, target=target)
             if not found:
                 ir.async_delete_issue(hass, DOMAIN, issue_id)
                 continue
@@ -190,9 +220,9 @@ def _async_check_models(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None
                 is_persistent=False,
                 severity=severity,
                 translation_key=issue.split("_{", 1)[0],
-                translation_placeholders=placeholders,
+                translation_placeholders={"model": model_id, "name": name},
             )
-            _LOGGER.warning("Model %s (%s): %s", model_id, model_key, issue_id)
+            _LOGGER.warning("Model %s of %s: %s", model_id, name, issue_id)
 
 
 async def async_setup_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -213,18 +243,8 @@ async def async_unload_repairs(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Unload repair issues for a config entry."""
     entry_id = entry.entry_id
     registry = ir.async_get(hass)
-    issues = [
-        *(
-            issue.format(entry_id=entry_id, model_key=model_key)
-            for issue in (_ISSUE_UNAVAIL, _ISSUE_NOT_PRIVATE)
-            for model_key, _, _ in _CONFIGURED_MODELS
-        ),
-        _ISSUE_AUTH.format(entry_id=entry_id),
-        _ISSUE_API_DOWN.format(entry_id=entry_id),
-        _ISSUE_RATE_LIMIT.format(entry_id=entry_id),
-    ]
-    for issue_id in issues:
-        if registry.async_get_issue(DOMAIN, issue_id):
+    for domain, issue_id in list(registry.issues):
+        if domain == DOMAIN and entry_id in issue_id:
             ir.async_delete_issue(hass, DOMAIN, issue_id)
             _LOGGER.debug("Deleted repair issue %s", issue_id)
 
@@ -251,12 +271,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> 
     _LOGGER.info("Successfully forwarded entry setups")
 
     await async_setup_repairs(hass, entry)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+async def _async_update_listener(
+    hass: HomeAssistant, entry: VeniceAIConfigEntry
+) -> None:
+    """Reload the entry when its options or subentries change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:
     """Migrate a config entry to the current version."""
-    if entry.version > 1:
+    if entry.version > 2:
         # Downgrading from a future version is not supported.
         _LOGGER.error(
             "Cannot downgrade Venice AI entry %s from version %s.%s",
@@ -266,9 +294,98 @@ async def async_migrate_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -
         )
         return False
 
-    # Add version-specific steps here, each ending with
-    # hass.config_entries.async_update_entry(entry, version=..., minor_version=...)
+    if entry.version == 1:
+        _migrate_to_subentries(hass, entry)
     return True
+
+
+# Options of version 1 that move into each subentry, and the unique ID suffix of
+# the entity that moves with them
+_V1_SUBENTRIES = (
+    (
+        SUBENTRY_CONVERSATION,
+        DEFAULT_CONVERSATION_NAME,
+        Platform.CONVERSATION,
+        "conversation",
+        (
+            CONF_PROMPT,
+            CONF_LLM_HASS_API,
+            CONF_CHAT_MODEL,
+            CONF_MAX_TOKENS,
+            CONF_TEMPERATURE,
+            CONF_TOP_P,
+            CONF_DISABLE_THINKING,
+            CONF_STRIP_THINKING_RESPONSE,
+            CONF_STREAM_RESPONSE,
+            CONF_MAX_TOOL_ITERATIONS,
+            CONF_MAX_HISTORY_MESSAGES,
+        ),
+    ),
+    (
+        SUBENTRY_AI_TASK,
+        DEFAULT_AI_TASK_NAME,
+        Platform.AI_TASK,
+        "task",
+        (
+            CONF_CHAT_MODEL,
+            CONF_MAX_TOKENS,
+            CONF_TEMPERATURE,
+            CONF_TOP_P,
+            CONF_DISABLE_THINKING,
+        ),
+    ),
+    (
+        SUBENTRY_TTS,
+        DEFAULT_TTS_NAME,
+        Platform.TTS,
+        "tts",
+        (CONF_TTS_MODEL, CONF_TTS_VOICE, CONF_TTS_SPEED),
+    ),
+    (SUBENTRY_STT, DEFAULT_STT_NAME, Platform.STT, "stt", (CONF_STT_MODEL,)),
+)
+_V1_ENTRY_OPTIONS = (CONF_PRIVATE_MODELS_ONLY, CONF_REQUEST_TIMEOUT, CONF_IMAGE_MODEL)
+_DEFAULTS = {
+    SUBENTRY_CONVERSATION: {
+        CONF_PROMPT: DEFAULT_SYSTEM_PROMPT,
+        CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
+    },
+    SUBENTRY_AI_TASK: RECOMMENDED_AI_TASK_OPTIONS,
+    SUBENTRY_TTS: RECOMMENDED_TTS_OPTIONS,
+    SUBENTRY_STT: RECOMMENDED_STT_OPTIONS,
+}
+
+
+def _migrate_to_subentries(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> None:
+    """Move the options of each feature, and its entity, into a subentry."""
+    options = entry.options
+    entity_registry = er.async_get(hass)
+    for subentry_type, title, platform, suffix, keys in _V1_SUBENTRIES:
+        data = {**_DEFAULTS[subentry_type]}
+        data.update((key, options[key]) for key in keys if key in options)
+        if subentry_type in (SUBENTRY_CONVERSATION, SUBENTRY_AI_TASK):
+            data[CONF_RECOMMENDED] = False
+        subentry = ConfigSubentry(
+            data=MappingProxyType(data),
+            subentry_type=subentry_type,
+            title=title,
+            unique_id=None,
+        )
+        hass.config_entries.async_add_subentry(entry, subentry)
+        entity_id = entity_registry.async_get_entity_id(
+            platform, DOMAIN, f"{entry.entry_id}_{suffix}"
+        )
+        if entity_id is not None:
+            entity_registry.async_update_entity(
+                entity_id,
+                config_subentry_id=subentry.subentry_id,
+                new_unique_id=subentry.subentry_id,
+            )
+    hass.config_entries.async_update_entry(
+        entry,
+        options={key: options[key] for key in _V1_ENTRY_OPTIONS if key in options},
+        version=2,
+        minor_version=1,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: VeniceAIConfigEntry) -> bool:

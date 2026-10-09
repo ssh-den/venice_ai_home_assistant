@@ -24,14 +24,24 @@ from custom_components.venice_ai.const import (
     CONF_MAX_HISTORY_MESSAGES,
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
+    RECOMMENDED_CHAT_MODEL,
     RECOMMENDED_MAX_HISTORY_MESSAGES,
+    SUBENTRY_CONVERSATION,
 )
 from custom_components.venice_ai.conversation import (
     _fallback_text,
     _trim_api_messages,
 )
 
-from .conftest import SCHEMA_MODEL, FakeChunk, FakeStream
+from .conftest import (
+    SCHEMA_MODEL,
+    FakeChunk,
+    FakeStream,
+    add_entry,
+    update_subentry,
+)
+
+AGENT_ID = "conversation.venice_ai_conversation"
 
 TEST_API_ID = "venice_test_api"
 
@@ -98,11 +108,10 @@ def options() -> dict[str, Any]:
 
 @pytest.fixture
 def mock_config_entry(hass: HomeAssistant, options: dict[str, Any]) -> MockConfigEntry:
-    entry = MockConfigEntry(
-        domain="venice_ai", title="Venice AI", data={"api_key": "k"}, options=options
+    return add_entry(
+        hass,
+        {SUBENTRY_CONVERSATION: {CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL, **options}},
     )
-    entry.add_to_hass(hass)
-    return entry
 
 
 @pytest.fixture
@@ -120,7 +129,7 @@ async def _converse(
         text,
         conversation_id,
         Context(),
-        agent_id="conversation.venice_ai",
+        agent_id=AGENT_ID,
     )
 
 
@@ -278,9 +287,11 @@ def test_trim_always_keeps_the_current_turn() -> None:
 async def test_history_option_limits_messages(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
-    hass.config_entries.async_update_entry(
+    update_subentry(
+        hass,
         setup_integration,
-        options={CONF_MAX_HISTORY_MESSAGES: 1, CONF_STREAM_RESPONSE: False},
+        SUBENTRY_CONVERSATION,
+        **{CONF_MAX_HISTORY_MESSAGES: 1, CONF_STREAM_RESPONSE: False},
     )
     await hass.async_block_till_done()
     first = await _converse(hass, "One")
@@ -523,10 +534,13 @@ async def test_streaming_reasoning_is_not_spoken(
 async def test_supports_streaming_follows_option(
     hass: HomeAssistant, setup_integration: MockConfigEntry
 ) -> None:
-    entity = hass.data[DATA_COMPONENT].get_entity("conversation.venice_ai")
+    entity = hass.data[DATA_COMPONENT].get_entity(AGENT_ID)
     assert entity is not None
     assert entity.supports_streaming
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_STREAM_RESPONSE: False}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_CONVERSATION, **{CONF_STREAM_RESPONSE: False}
     )
+    await hass.async_block_till_done()
+    entity = hass.data[DATA_COMPONENT].get_entity(AGENT_ID)
+    assert entity is not None
     assert not entity.supports_streaming

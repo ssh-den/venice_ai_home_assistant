@@ -65,6 +65,14 @@ async def async_get_config_entry_diagnostics(
         "version": entry.version,
         "options": async_redact_data(entry_options, TO_REDACT),
         "data": async_redact_data(entry_data, TO_REDACT),
+        "subentries": [
+            {
+                "type": subentry.subentry_type,
+                "title": subentry.title,
+                "data": async_redact_data(dict(subentry.data), TO_REDACT),
+            }
+            for subentry in entry.subentries.values()
+        ],
         "state": (
             entry.state.value if hasattr(entry.state, "value") else str(entry.state)
         ),

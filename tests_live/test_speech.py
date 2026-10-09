@@ -62,7 +62,9 @@ async def _chunks(*parts: bytes | str) -> AsyncGenerator:
 async def _round_trip(
     hass: HomeAssistant, text: str, language: str, options: dict | None = None
 ) -> str:
-    extension, audio = await _tts(hass).async_get_tts_audio(text, language, options or {})
+    extension, audio = await _tts(hass).async_get_tts_audio(
+        text, language, options or {}
+    )
     assert extension == "mp3"
     assert audio and _is_mp3(audio)
     metadata = stt.SpeechMetadata(
@@ -101,7 +103,9 @@ async def test_english_round_trip(
 async def test_russian_round_trip(
     hass: HomeAssistant, live_entry: MockConfigEntry
 ) -> None:
-    tts_models = parse_tts_models(live_entry.runtime_data.coordinator.data["tts_models"])
+    tts_models = parse_tts_models(
+        live_entry.runtime_data.coordinator.data["tts_models"]
+    )
     model = tts_models[RUSSIAN_TTS_MODEL]
     assert "ru" in model.languages
     text = await _round_trip(

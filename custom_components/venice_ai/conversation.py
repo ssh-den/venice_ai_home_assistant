@@ -9,6 +9,7 @@ import time
 from typing import Any, Literal
 
 from homeassistant.components import conversation
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -32,8 +33,9 @@ from .const import (
     RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_STRIP_THINKING_RESPONSE,
+    SUBENTRY_CONVERSATION,
 )
-from .entity import device_info
+from .entity import VeniceAIEntity, subentries_of
 from .models import get_chat_model_info
 from .venice_api import (
     ChatParameters,
@@ -42,6 +44,7 @@ from .venice_api import (
     VeniceConversationService,
     chat_log_to_messages,
     chat_parameters,
+    thinking_tags,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,8 +62,12 @@ async def async_setup_entry(
     entry: VeniceAIConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up the Venice AI conversation entity."""
-    async_add_entities([VeniceAIConversationEntity(entry)])
+    """Set up a conversation entity for each conversation subentry."""
+    for subentry in subentries_of(entry, SUBENTRY_CONVERSATION):
+        async_add_entities(
+            [VeniceAIConversationEntity(entry, subentry)],
+            config_subentry_id=subentry.subentry_id,
+        )
 
 
 def _format_tool(
@@ -187,29 +194,24 @@ def _add_fallback(
     )
 
 
-class VeniceAIConversationEntity(conversation.ConversationEntity):
+class VeniceAIConversationEntity(conversation.ConversationEntity, VeniceAIEntity):
     """Venice AI conversation entity."""
 
-    _attr_has_entity_name = True
-    _attr_name = None
-
-    def __init__(self, entry: VeniceAIConfigEntry) -> None:
+    def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
-        self.entry = entry
+        super().__init__(
+            entry, subentry, subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        )
         self._service = VeniceConversationService(entry.runtime_data.client)
-        self._attr_unique_id = f"{entry.entry_id}_conversation"
-        if entry.options.get(CONF_LLM_HASS_API):
+        if subentry.data.get(CONF_LLM_HASS_API):
             self._attr_supported_features = (
                 conversation.ConversationEntityFeature.CONTROL
             )
-        self._attr_device_info = device_info(entry)
 
     @property
     def supports_streaming(self) -> bool:
         """Return whether answers are streamed to Home Assistant."""
-        return bool(
-            self.entry.options.get(CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE)
-        )
+        return bool(self.options.get(CONF_STREAM_RESPONSE, RECOMMENDED_STREAM_RESPONSE))
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -222,7 +224,7 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         chat_log: conversation.ChatLog,
     ) -> conversation.ConversationResult:
         """Process a conversation turn."""
-        options = self.entry.options
+        options = self.options
 
         try:
             await chat_log.async_provide_llm_data(
@@ -255,12 +257,13 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         chat_log: conversation.ChatLog,
     ) -> None:
         """Call the model until it answers without tool calls."""
-        options = self.entry.options
+        options = self.options
         strip = bool(
             options.get(
                 CONF_STRIP_THINKING_RESPONSE, RECOMMENDED_STRIP_THINKING_RESPONSE
             )
         )
+        tags = thinking_tags(options) if strip else ()
         max_iterations = int(
             options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
         )
@@ -282,13 +285,13 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
 
         for iteration in range(max_iterations):
             messages = _trim_api_messages(
-                chat_log_to_messages(chat_log, strip), max_history
+                chat_log_to_messages(chat_log, tags), max_history
             )
             outcome = StreamOutcome()
             started = time.monotonic()
             async for _content in chat_log.async_add_delta_content_stream(
                 user_input.agent_id,
-                self._async_deltas(chat_log, messages, params, outcome, strip),
+                self._async_deltas(chat_log, messages, params, outcome, tags),
             ):
                 pass
             _LOGGER.debug(
@@ -321,13 +324,13 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
         messages: list[dict[str, Any]],
         params: ChatParameters,
         outcome: StreamOutcome,
-        strip: bool,
+        tags: tuple[str, ...],
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
         """Translate Venice AI deltas into chat log deltas."""
         yield {"role": "assistant"}
-        thinking_filter = ThinkingFilter() if strip else None
+        thinking_filter = ThinkingFilter(tags) if tags else None
         raw_tool_calls: list[dict[str, Any]] = []
         async for delta in self._service.chat_deltas(
             messages, params, outcome, self.supports_streaming

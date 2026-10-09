@@ -22,7 +22,9 @@ async def test_recommended_models_exist(live_entry: MockConfigEntry) -> None:
     assert RECOMMENDED_CHAT_MODEL in _ids(data["text_models"])
     assert RECOMMENDED_TTS_MODEL in _ids(data["tts_models"])
     assert RECOMMENDED_STT_MODEL in _ids(data["asr_models"])
-    assert parse_models(data["text_models"])[RECOMMENDED_CHAT_MODEL].supports_function_calling
+    assert parse_models(data["text_models"])[
+        RECOMMENDED_CHAT_MODEL
+    ].supports_function_calling
 
 
 async def test_language_table_covers_all_speech_models(

@@ -16,14 +16,18 @@ from custom_components.venice_ai.const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
     CONF_STREAM_RESPONSE,
+    SUBENTRY_AI_TASK,
+    SUBENTRY_CONVERSATION,
 )
 from custom_components.venice_ai.models import parse_models
 
-AGENT_ID = "conversation.venice_ai"
+from .conftest import update_subentry
+
+AGENT_ID = "conversation.venice_ai_conversation"
 
 
-def _use_cheapest_model(
-    hass: HomeAssistant, entry: MockConfigEntry, **options: object
+async def _use_cheapest_model(
+    hass: HomeAssistant, entry: MockConfigEntry, subentry_type: str, **options: object
 ) -> str:
     models = parse_models(entry.runtime_data.coordinator.data["text_models"])
     model = min(
@@ -37,9 +41,11 @@ def _use_cheapest_model(
         ),
         key=lambda m: (m.input_price or 0) + (m.output_price or 0),
     )
-    hass.config_entries.async_update_entry(
+    await update_subentry(
+        hass,
         entry,
-        options={CONF_CHAT_MODEL: model.id, CONF_MAX_TOKENS: 128, **options},
+        subentry_type,
+        **{CONF_CHAT_MODEL: model.id, CONF_MAX_TOKENS: 128, **options},
     )
     return model.id
 
@@ -55,10 +61,14 @@ async def test_answer_streamed_and_not(
     hass: HomeAssistant, live_entry: MockConfigEntry
 ) -> None:
     prompt = "Reply with the single word pong."
-    model = _use_cheapest_model(hass, live_entry, **{CONF_STREAM_RESPONSE: True})
+    model = await _use_cheapest_model(
+        hass, live_entry, SUBENTRY_CONVERSATION, **{CONF_STREAM_RESPONSE: True}
+    )
     assert "pong" in (await _speech(hass, prompt)).lower(), model
 
-    _use_cheapest_model(hass, live_entry, **{CONF_STREAM_RESPONSE: False})
+    await _use_cheapest_model(
+        hass, live_entry, SUBENTRY_CONVERSATION, **{CONF_STREAM_RESPONSE: False}
+    )
     assert "pong" in (await _speech(hass, prompt)).lower(), model
 
 
@@ -67,10 +77,14 @@ async def test_tool_call_controls_an_entity(
 ) -> None:
     assert await async_setup_component(hass, "intent", {})
     assert await async_setup_component(
-        hass, "input_boolean", {"input_boolean": {"test_switch": {"name": "Test switch"}}}
+        hass,
+        "input_boolean",
+        {"input_boolean": {"test_switch": {"name": "Test switch"}}},
     )
     async_expose_entity(hass, conversation.DOMAIN, "input_boolean.test_switch", True)
-    model = _use_cheapest_model(hass, live_entry, **{CONF_LLM_HASS_API: ["assist"]})
+    model = await _use_cheapest_model(
+        hass, live_entry, SUBENTRY_CONVERSATION, **{CONF_LLM_HASS_API: ["assist"]}
+    )
 
     await _speech(hass, "Turn on the Test switch.")
 
@@ -82,11 +96,11 @@ async def test_tool_call_controls_an_entity(
 async def test_ai_task_structure(
     hass: HomeAssistant, live_entry: MockConfigEntry
 ) -> None:
-    model = _use_cheapest_model(hass, live_entry)
+    model = await _use_cheapest_model(hass, live_entry, SUBENTRY_AI_TASK)
     result = await ai_task.async_generate_data(
         hass,
         task_name="sum",
-        entity_id="ai_task.venice_ai_ai_task",
+        entity_id="ai_task.venice_ai_task",
         instructions="What is 2 + 3? Return the number as answer.",
         structure=vol.Schema({vol.Required("answer"): int}),
     )

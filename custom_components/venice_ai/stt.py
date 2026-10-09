@@ -6,14 +6,20 @@ from collections.abc import AsyncIterable
 import logging
 
 from homeassistant.components import stt
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import VeniceAIConfigEntry
 from .audio import pcm_to_wav
 from .client import VeniceAIError
-from .const import CONF_STT_MODEL, MAX_STT_BUFFER_SIZE, RECOMMENDED_STT_MODEL
-from .entity import device_info
+from .const import (
+    CONF_STT_MODEL,
+    MAX_STT_BUFFER_SIZE,
+    RECOMMENDED_STT_MODEL,
+    SUBENTRY_STT,
+)
+from .entity import VeniceAIEntity, subentries_of
 from .languages import primary_language, stt_languages
 
 _LOGGER = logging.getLogger(__name__)
@@ -24,25 +30,25 @@ async def async_setup_entry(
     entry: VeniceAIConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up Venice AI STT entity."""
-    async_add_entities([VeniceAISTT(entry)])
+    """Set up a speech-to-text entity for each STT subentry."""
+    for subentry in subentries_of(entry, SUBENTRY_STT):
+        async_add_entities(
+            [VeniceAISTT(entry, subentry)], config_subentry_id=subentry.subentry_id
+        )
 
 
-class VeniceAISTT(stt.SpeechToTextEntity):
+class VeniceAISTT(stt.SpeechToTextEntity, VeniceAIEntity):
     """The Venice AI Speech-to-Text provider."""
 
-    _attr_has_entity_name = True
-    _attr_name = None
-
-    def __init__(self, entry: VeniceAIConfigEntry) -> None:
+    def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize Venice AI STT."""
-        self.entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_stt"
-        self._attr_device_info = device_info(entry)
+        super().__init__(
+            entry, subentry, subentry.data.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)
+        )
 
     @property
     def _model(self) -> str:
-        return str(self.entry.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL))
+        return str(self.options.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL))
 
     @property
     def supported_languages(self) -> list[str]:

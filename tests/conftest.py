@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from homeassistant.config_entries import ConfigSubentryDataWithId
 from homeassistant.const import CONF_API_KEY
 from homeassistant.core import HomeAssistant
 from homeassistant.setup import async_setup_component
@@ -17,16 +18,48 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.venice_ai.client import VeniceAIMetrics
 from custom_components.venice_ai.const import (
+    DEFAULT_AI_TASK_NAME,
+    DEFAULT_CONVERSATION_NAME,
+    DEFAULT_STT_NAME,
+    DEFAULT_TTS_NAME,
     DOMAIN,
+    RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_CONVERSATION_OPTIONS,
     RECOMMENDED_STT_MODEL,
+    RECOMMENDED_STT_OPTIONS,
     RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_OPTIONS,
+    SUBENTRY_AI_TASK,
+    SUBENTRY_CONVERSATION,
+    SUBENTRY_STT,
+    SUBENTRY_TTS,
 )
 
 # Text model with structured output but without function calling
 SCHEMA_MODEL = "schema-model"
 # Multilingual TTS model that only produces WAV
 WAV_TTS_MODEL = "tts-wav-only"
+
+# Subentry IDs, which are also the unique IDs of their entities
+SUBENTRY_IDS = {
+    SUBENTRY_CONVERSATION: "conversation_subentry",
+    SUBENTRY_AI_TASK: "ai_task_subentry",
+    SUBENTRY_TTS: "tts_subentry",
+    SUBENTRY_STT: "stt_subentry",
+}
+SUBENTRY_TITLES = {
+    SUBENTRY_CONVERSATION: DEFAULT_CONVERSATION_NAME,
+    SUBENTRY_AI_TASK: DEFAULT_AI_TASK_NAME,
+    SUBENTRY_TTS: DEFAULT_TTS_NAME,
+    SUBENTRY_STT: DEFAULT_STT_NAME,
+}
+SUBENTRY_DATA = {
+    SUBENTRY_CONVERSATION: RECOMMENDED_CONVERSATION_OPTIONS,
+    SUBENTRY_AI_TASK: RECOMMENDED_AI_TASK_OPTIONS,
+    SUBENTRY_TTS: RECOMMENDED_TTS_OPTIONS,
+    SUBENTRY_STT: RECOMMENDED_STT_OPTIONS,
+}
 
 MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
     "text": [
@@ -93,17 +126,37 @@ async def ha_core(hass: HomeAssistant) -> None:
     assert await async_setup_component(hass, "homeassistant", {})
 
 
-@pytest.fixture
-def mock_config_entry(hass: HomeAssistant) -> MockConfigEntry:
-    """Return a Venice AI config entry added to hass."""
+def add_entry(
+    hass: HomeAssistant, subentry_data: dict[str, dict[str, Any]] | None = None
+) -> MockConfigEntry:
+    """Add a Venice AI entry with one subentry of each type to hass."""
+    data = {**SUBENTRY_DATA, **(subentry_data or {})}
     entry = MockConfigEntry(
         domain=DOMAIN,
         title="Venice AI",
         data={CONF_API_KEY: "test-key"},
         options={},
+        version=2,
+        minor_version=1,
+        subentries_data=[
+            ConfigSubentryDataWithId(
+                subentry_id=subentry_id,
+                subentry_type=subentry_type,
+                title=SUBENTRY_TITLES[subentry_type],
+                data=data[subentry_type],
+                unique_id=None,
+            )
+            for subentry_type, subentry_id in SUBENTRY_IDS.items()
+        ],
     )
     entry.add_to_hass(hass)
     return entry
+
+
+@pytest.fixture
+def mock_config_entry(hass: HomeAssistant) -> MockConfigEntry:
+    """Return a Venice AI config entry added to hass."""
+    return add_entry(hass)
 
 
 @pytest.fixture
@@ -240,3 +293,13 @@ def chunk():
         return FakeChunk([{"delta": delta}])
 
     return _build
+
+
+def update_subentry(
+    hass: HomeAssistant, entry: MockConfigEntry, subentry_type: str, **data: Any
+) -> None:
+    """Change the settings of one subentry; the entry reloads afterwards."""
+    subentry = entry.subentries[SUBENTRY_IDS[subentry_type]]
+    hass.config_entries.async_update_subentry(
+        entry, subentry, data={**subentry.data, **data}
+    )

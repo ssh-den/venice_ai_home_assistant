@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from homeassistant.components import ai_task, conversation
+from homeassistant.config_entries import ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import llm
@@ -15,8 +16,14 @@ from voluptuous_openapi import convert
 
 from . import VeniceAIConfigEntry
 from .client import VeniceAIError
-from .const import CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL
-from .entity import device_info
+from .const import (
+    CONF_CHAT_MODEL,
+    CONF_STRUCTURE_PROMPT,
+    DEFAULT_STRUCTURE_PROMPT,
+    RECOMMENDED_CHAT_MODEL,
+    SUBENTRY_AI_TASK,
+)
+from .entity import VeniceAIEntity, subentries_of
 from .models import get_chat_model_info
 from .venice_api import (
     VeniceConversationService,
@@ -24,6 +31,7 @@ from .venice_api import (
     chat_parameters,
     extract_json,
     strip_thinking,
+    thinking_tags,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -34,22 +42,24 @@ async def async_setup_entry(
     entry: VeniceAIConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Set up AI Task entities."""
-    async_add_entities([VeniceAITaskEntity(entry)])
+    """Set up an AI Task entity for each AI Task subentry."""
+    for subentry in subentries_of(entry, SUBENTRY_AI_TASK):
+        async_add_entities(
+            [VeniceAITaskEntity(entry, subentry)],
+            config_subentry_id=subentry.subentry_id,
+        )
 
 
-class VeniceAITaskEntity(ai_task.AITaskEntity):
+class VeniceAITaskEntity(ai_task.AITaskEntity, VeniceAIEntity):
     """Venice AI AI Task entity."""
 
-    _attr_has_entity_name = True
-    _attr_name = "AI Task"
     _attr_supported_features = ai_task.AITaskEntityFeature.GENERATE_DATA
 
-    def __init__(self, entry: VeniceAIConfigEntry) -> None:
+    def __init__(self, entry: VeniceAIConfigEntry, subentry: ConfigSubentry) -> None:
         """Initialize the entity."""
-        self.entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_task"
-        self._attr_device_info = device_info(entry)
+        super().__init__(
+            entry, subentry, subentry.data.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        )
         self._service = VeniceConversationService(entry.runtime_data.client)
 
     async def _async_generate_data(
@@ -58,11 +68,12 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         chat_log: conversation.ChatLog,
     ) -> ai_task.GenDataTaskResult:
         """Handle a generate data task."""
-        messages = chat_log_to_messages(chat_log, True)
+        options = self.options
+        tags = thinking_tags(options)
+        messages = chat_log_to_messages(chat_log, tags)
         if not messages or messages[-1]["role"] != "user":
             raise HomeAssistantError("No user message found in chat log")
 
-        options = self.entry.options
         model = options.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
         info = get_chat_model_info(self.entry, model)
         response_format: dict[str, Any] | None = None
@@ -89,9 +100,8 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
                 {
                     "role": "system",
                     "content": (
-                        "Respond only with a JSON object matching this JSON "
-                        "schema, without any surrounding text:\n"
-                        f"{json.dumps(schema)}"
+                        f"{options.get(CONF_STRUCTURE_PROMPT, DEFAULT_STRUCTURE_PROMPT)}"
+                        f"\n{json.dumps(schema)}"
                     ),
                 },
             )
@@ -106,7 +116,7 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         choices = response.get("choices") if isinstance(response, dict) else None
         if not choices:
             raise HomeAssistantError("Invalid Venice AI response")
-        text = strip_thinking(choices[0].get("message", {}).get("content") or "")
+        text = strip_thinking(choices[0].get("message", {}).get("content") or "", tags)
 
         chat_log.async_add_assistant_content_without_tools(
             conversation.AssistantContent(agent_id=self.entity_id, content=text)

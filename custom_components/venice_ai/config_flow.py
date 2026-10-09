@@ -1,19 +1,22 @@
-"""Config flow for Venice AI Conversation integration."""
+"""Config flow for the Venice AI integration."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
-from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from homeassistant.config_entries import (
     ConfigEntry,
+    ConfigEntryState,
     ConfigFlow,
     ConfigFlowResult,
-    OptionsFlowWithReload,
+    ConfigSubentryFlow,
+    OptionsFlow,
+    SubentryFlowResult,
 )
-from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API
+from homeassistant.const import CONF_API_KEY, CONF_LLM_HASS_API, CONF_NAME
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv, llm
 from homeassistant.helpers.httpx_client import get_async_client
 from homeassistant.helpers.selector import (
@@ -26,7 +29,10 @@ from homeassistant.helpers.selector import (
     SelectSelectorConfig,
     SelectSelectorMode,
     TemplateSelector,
+    TextSelector,
+    TextSelectorConfig,
 )
+from homeassistant.helpers.typing import VolDictType
 import voluptuous as vol
 
 from .client import AsyncVeniceAIClient, AuthenticationError, VeniceAIError
@@ -39,18 +45,30 @@ from .const import (
     CONF_MAX_TOOL_ITERATIONS,
     CONF_PRIVATE_MODELS_ONLY,
     CONF_PROMPT,
+    CONF_RECOMMENDED,
     CONF_REQUEST_TIMEOUT,
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
+    CONF_STRUCTURE_PROMPT,
     CONF_STT_MODEL,
     CONF_TEMPERATURE,
+    CONF_THINKING_TAGS,
     CONF_TOP_P,
     CONF_TTS_MODEL,
     CONF_TTS_SPEED,
     CONF_TTS_VOICE,
+    CONF_VENICE_SYSTEM_PROMPT,
+    DEFAULT_AI_TASK_NAME,
+    DEFAULT_CONVERSATION_NAME,
+    DEFAULT_NAME,
+    DEFAULT_STRUCTURE_PROMPT,
+    DEFAULT_STT_NAME,
     DEFAULT_SYSTEM_PROMPT,
+    DEFAULT_TTS_NAME,
     DOMAIN,
+    RECOMMENDED_AI_TASK_OPTIONS,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_CONVERSATION_OPTIONS,
     RECOMMENDED_DISABLE_THINKING,
     RECOMMENDED_IMAGE_MODEL,
     RECOMMENDED_MAX_HISTORY_MESSAGES,
@@ -61,650 +79,549 @@ from .const import (
     RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_STRIP_THINKING_RESPONSE,
     RECOMMENDED_STT_MODEL,
+    RECOMMENDED_STT_OPTIONS,
     RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_THINKING_TAGS,
     RECOMMENDED_TOP_P,
     RECOMMENDED_TTS_MODEL,
+    RECOMMENDED_TTS_OPTIONS,
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
+    RECOMMENDED_VENICE_SYSTEM_PROMPT,
+    SUBENTRY_AI_TASK,
+    SUBENTRY_CONVERSATION,
+    SUBENTRY_STT,
+    SUBENTRY_TTS,
 )
-from .models import (
-    TTSModel,
-    is_private,
-    parse_models,
-    parse_tts_models,
-    privacy_label,
-)
+from .languages import voice_language
+from .models import TTSModel, is_private, parse_models, parse_tts_models, privacy_label
+
+if TYPE_CHECKING:
+    from . import VeniceAIConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
+STEP_USER_DATA_SCHEMA = vol.Schema({vol.Required(CONF_API_KEY): cv.string})
 
-# ---------------------------------------------------------------------------
-# Combined TTS model + voice selector
-# ---------------------------------------------------------------------------
-# Instead of two separate dropdowns (model, then voice) that require a
-# re-render handshake to stay in sync, we expose a **single** searchable
-# dropdown whose entries look like:
-#
-#   "kokoro → af_heart"
-#   "kokoro → af_sky"
-#   "outertts → nova"
-#
-# The user types a model name to filter, picks an entry, and both model and
-# voice are set atomically in one submit.  No second page, no silent
-# re-render, no abandonment risk.
-#
-# On save the combined value is split back into CONF_TTS_MODEL / CONF_TTS_VOICE
-# for storage — the rest of the integration is unchanged.
-# ---------------------------------------------------------------------------
+# Coordinator model list of each /models type
+_COORDINATOR_KEYS = {
+    "text": "text_models",
+    "tts": "tts_models",
+    "asr": "asr_models",
+    "image": "image_models",
+}
 
-# Visual separator used inside combined values.  Space-arrow-space is easy to
-# read and extremely unlikely to appear inside a Venice AI model or voice ID.
-_TTS_MV_SEP = " → "
-
-# Form-only schema key.  This key is **never** written to config entry options;
-# it is parsed on submit and stored as CONF_TTS_MODEL + CONF_TTS_VOICE.
-_CONF_TTS_MODEL_VOICE = "tts_model_voice"
-
-# Models of each type as listed by /models, keyed by "text", "tts", "asr", "image"
-type _Models = dict[str, list[dict[str, Any]]]
-
-STEP_USER_DATA_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_API_KEY): cv.string,
-    }
-)
+# Advanced chat settings, with the values used while "recommended" is on
+_CHAT_ADVANCED: dict[str, Any] = {
+    CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
+    CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
+    CONF_TOP_P: RECOMMENDED_TOP_P,
+    CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
+    CONF_THINKING_TAGS: RECOMMENDED_THINKING_TAGS,
+    CONF_VENICE_SYSTEM_PROMPT: RECOMMENDED_VENICE_SYSTEM_PROMPT,
+}
+_CONVERSATION_ADVANCED: dict[str, Any] = {
+    **_CHAT_ADVANCED,
+    CONF_STRIP_THINKING_RESPONSE: RECOMMENDED_STRIP_THINKING_RESPONSE,
+    CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
+    CONF_MAX_TOOL_ITERATIONS: RECOMMENDED_MAX_TOOL_ITERATIONS,
+    CONF_MAX_HISTORY_MESSAGES: RECOMMENDED_MAX_HISTORY_MESSAGES,
+}
+_AI_TASK_ADVANCED: dict[str, Any] = {
+    **_CHAT_ADVANCED,
+    CONF_STRUCTURE_PROMPT: DEFAULT_STRUCTURE_PROMPT,
+}
 
 
-class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Venice AI Conversation."""
+def _number(
+    low: float, high: float, step: float, mode: NumberSelectorMode
+) -> NumberSelector:
+    return NumberSelector(NumberSelectorConfig(min=low, max=high, step=step, mode=mode))
 
-    VERSION = 1
 
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle the initial step."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            try:
-                await AsyncVeniceAIClient(
-                    api_key=user_input[CONF_API_KEY],
-                    http_client=get_async_client(self.hass),
-                ).validate_api_key()
-
-            except AuthenticationError:
-                errors["base"] = "invalid_auth"
-                _LOGGER.warning("Venice AI authentication failed")
-            except VeniceAIError as err:
-                errors["base"] = "cannot_connect"
-                _LOGGER.error("Cannot connect to Venice AI: %s", err)
-            except Exception:
-                _LOGGER.exception(
-                    "Unexpected exception during Venice AI setup validation"
-                )
-                errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(
-                    title="Venice AI",
-                    data=user_input,
-                )
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=STEP_USER_DATA_SCHEMA,
-            errors=errors,
+def _select(
+    options: list[SelectOptionDict], *, custom_value: bool = False
+) -> SelectSelector:
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=options, mode=SelectSelectorMode.DROPDOWN, custom_value=custom_value
         )
-
-    async def async_step_reauth(
-        self, entry_data: MappingProxyType[str, Any]
-    ) -> ConfigFlowResult:
-        """Handle re-authentication when API key becomes invalid."""
-        return await self.async_step_reauth_confirm()
-
-    async def async_step_reauth_confirm(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Confirm re-authentication with new API key."""
-        errors: dict[str, str] = {}
-        reauth_entry = self._get_reauth_entry()
-
-        if user_input is not None:
-            try:
-                await AsyncVeniceAIClient(
-                    api_key=user_input[CONF_API_KEY],
-                    http_client=get_async_client(self.hass),
-                ).validate_api_key()
-
-            except AuthenticationError:
-                errors["base"] = "invalid_auth"
-                _LOGGER.warning("Venice AI re-authentication failed: invalid API key")
-            except VeniceAIError as err:
-                errors["base"] = "cannot_connect"
-                _LOGGER.error("Cannot connect to Venice AI during re-auth: %s", err)
-            except Exception:
-                _LOGGER.exception(
-                    "Unexpected exception during Venice AI re-auth validation"
-                )
-                errors["base"] = "unknown"
-            else:
-                return self.async_update_reload_and_abort(
-                    reauth_entry,
-                    data={**reauth_entry.data, CONF_API_KEY: user_input[CONF_API_KEY]},
-                )
-
-        return self.async_show_form(
-            step_id="reauth_confirm",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_API_KEY): cv.string,
-                }
-            ),
-            errors=errors,
-            description_placeholders={"name": reauth_entry.title},
-        )
-
-    @staticmethod
-    def async_get_options_flow(
-        config_entry: ConfigEntry,
-    ) -> VeniceAIOptionsFlow:
-        """Get the options flow for this handler."""
-        return VeniceAIOptionsFlow()
+    )
 
 
-def _build_combined_tts_options(
-    tts_info: dict[str, TTSModel],
-) -> list[SelectOptionDict]:
-    """Return a flat 'model → voice' SelectOptionDict list covering all models.
-
-    Options are sorted by model name so entries for the same model are grouped
-    together in the dropdown.  Because HA renders this in dropdown mode with a
-    live search box, the user can type a model name to instantly filter to only
-    that model's voices, or type a voice name to find it across all models.
-    """
-    options: list[SelectOptionDict] = []
-    for model_id in sorted(tts_info):
-        info = tts_info[model_id]
-        for voice in info.voices:
-            combined = f"{model_id}{_TTS_MV_SEP}{voice}"
-            label = f"{combined} ({info.privacy})" if info.privacy else combined
-            options.append(SelectOptionDict(label=label, value=combined))
-    if not options:
-        fallback = f"{RECOMMENDED_TTS_MODEL}{_TTS_MV_SEP}{RECOMMENDED_TTS_VOICE}"
-        options = [SelectOptionDict(label=fallback, value=fallback)]
-    return options
-
-
-def _parse_combined_tts_value(value: str) -> tuple[str, str] | None:
-    """Split a 'model → voice' string into (model_id, voice).
-
-    Returns ``None`` if the value cannot be parsed into two non-empty parts.
-    """
-    if _TTS_MV_SEP in value:
-        model_id, _, voice = value.partition(_TTS_MV_SEP)
-        if model_id and voice:
-            return model_id, voice
-    return None
-
-
-def _resolve_combined_tts_value(
-    tts_info: dict[str, TTSModel],
-    user_input: dict[str, Any] | None,
-    saved_options: Mapping[str, Any],
-) -> str:
-    """Return the 'model → voice' string that should be pre-selected.
-
-    Priority:
-    1. A valid combined value already present in the current form submission.
-    2. Reconstructed from the previously saved CONF_TTS_MODEL + CONF_TTS_VOICE.
-    3. The default voice of the recommended (or first available) model.
-    """
-    # 1. Current submission
-    if user_input is not None:
-        submitted = user_input.get(_CONF_TTS_MODEL_VOICE)
-        if isinstance(submitted, str):
-            parsed = _parse_combined_tts_value(submitted)
-            if parsed:
-                model_id, voice = parsed
-                info = tts_info.get(model_id)
-                if info and voice in info.voices:
-                    return submitted
-
-    # 2. Saved options
-    saved_model = saved_options.get(CONF_TTS_MODEL)
-    saved_voice = saved_options.get(CONF_TTS_VOICE)
-    if isinstance(saved_model, str) and isinstance(saved_voice, str):
-        info = tts_info.get(saved_model)
-        if info and saved_voice in info.voices:
-            return f"{saved_model}{_TTS_MV_SEP}{saved_voice}"
-
-    # 3. Fallback: first voice of recommended (or first available) model
-    for candidate in [RECOMMENDED_TTS_MODEL, *sorted(tts_info)]:
-        info = tts_info.get(candidate)
-        if info and info.voices:
-            return f"{candidate}{_TTS_MV_SEP}{info.voices[0]}"
-
-    return f"{RECOMMENDED_TTS_MODEL}{_TTS_MV_SEP}{RECOMMENDED_TTS_VOICE}"
-
-
-def _model_label(model: dict[str, Any]) -> str:
+def _model_label(model: Mapping[str, Any]) -> str:
     spec = model.get("model_spec")
-    name = spec.get("name") if isinstance(spec, dict) else None
+    name = spec.get("name") if isinstance(spec, Mapping) else None
     details = ", ".join(
         part for part in (str(model["id"]), privacy_label(model)) if part
     )
     return f"{name} ({details})" if name else details
 
 
-def _select_options(
-    models: _Models,
-) -> tuple[
-    list[SelectOptionDict],
-    dict[str, TTSModel],
-    list[SelectOptionDict],
-    list[SelectOptionDict],
-]:
-    """Return the chat, TTS, STT and image choices, with fallbacks for empty lists."""
-    chat_options = [
-        SelectOptionDict(label=info.label, value=info.id)
-        for info in parse_models(models.get("text", [])).values()
-    ] or [SelectOptionDict(label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL)]
-    tts_models = parse_tts_models(models.get("tts", [])) or {
-        RECOMMENDED_TTS_MODEL: TTSModel(RECOMMENDED_TTS_MODEL, (RECOMMENDED_TTS_VOICE,))
-    }
-    stt_options = [
-        SelectOptionDict(label=_model_label(m), value=m["id"])
-        for m in models.get("asr", [])
-    ] or [SelectOptionDict(label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL)]
-    image_options = [
-        SelectOptionDict(label=m["id"], value=m["id"]) for m in models.get("image", [])
-    ]
-    return chat_options, tts_models, stt_options, image_options
+def _tts_model_label(model: TTSModel) -> str:
+    count = len(model.languages)
+    details = [model.privacy, f"{count} language{'s' if count != 1 else ''}"]
+    return f"{model.id} ({', '.join(d for d in details if d)})"
 
 
-def _not_private_errors(
-    models: _Models, user_input: Mapping[str, Any]
-) -> dict[str, str]:
-    """Flag selected models that Venice lists without private processing."""
-    combined = user_input.get(_CONF_TTS_MODEL_VOICE)
-    parsed = _parse_combined_tts_value(combined) if isinstance(combined, str) else None
-    selected = {
-        CONF_CHAT_MODEL: (
-            "text",
-            user_input.get(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL),
-        ),
-        _CONF_TTS_MODEL_VOICE: ("tts", parsed[0] if parsed else RECOMMENDED_TTS_MODEL),
-        CONF_STT_MODEL: ("asr", user_input.get(CONF_STT_MODEL, RECOMMENDED_STT_MODEL)),
-        CONF_IMAGE_MODEL: ("image", user_input.get(CONF_IMAGE_MODEL)),
-    }
-    errors: dict[str, str] = {}
-    for field, (model_type, model_id) in selected.items():
-        model = next(
-            (m for m in models.get(model_type, []) if m["id"] == model_id), None
-        )
-        if model is not None and not is_private(model):
-            errors[field] = "model_not_private"
-    return errors
+def _voice_label(voice: str) -> str:
+    language = voice_language(voice)
+    return f"{voice} ({language})" if language else voice
 
 
-async def _async_list_models(
-    client: AsyncVeniceAIClient, model_type: str, errors: dict[str, str]
-) -> list[dict[str, Any]]:
-    """List one model category, recording an auth failure in ``errors``."""
-    try:
-        return await client.models.list(model_type=model_type)
-    except AuthenticationError:
-        _LOGGER.error("Authentication error fetching %s models", model_type)
-        errors["base"] = "invalid_auth"
-    except VeniceAIError as err:
-        _LOGGER.warning("Failed to fetch %s models: %s", model_type, err)
-    return []
+def _private_only(entry: ConfigEntry) -> bool:
+    return bool(
+        entry.options.get(CONF_PRIVATE_MODELS_ONLY, RECOMMENDED_PRIVATE_MODELS_ONLY)
+    )
 
 
-# ---------------------------------------------------------------------------
-# Options flow
-# ---------------------------------------------------------------------------
+class VeniceAIConfigFlow(ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Venice AI."""
 
+    VERSION = 2
+    MINOR_VERSION = 1
 
-class VeniceAIOptionsFlow(OptionsFlowWithReload):
-    """Options flow for Venice AI.
-
-    Subclasses ``OptionsFlowWithReload`` (HA ≥ 2024.1) so the integration is
-    automatically reloaded once the user saves their options.
-
-    TTS model and voice are presented as a **single combined searchable
-    dropdown** (``tts_model_voice``).  Each entry is formatted as
-    ``"<model> → <voice>"`` so the user can type a model name to filter the
-    list, then pick any voice for that model in one action.  The combined
-    value is parsed on submit and stored as the separate ``tts_model`` and
-    ``tts_voice`` keys that the rest of the integration already reads.
-
-    This eliminates the previous two-step flow that required a re-render
-    (or a second form page) whenever the TTS model changed, which was
-    confusing and could result in lost settings if the user closed the
-    second window.
-    """
-
-    async def _fetch_models(self) -> tuple[_Models, dict[str, str]]:
-        """Fetch the models live, so newly added ones show up immediately.
-
-        Image models come from the coordinator, as they are only a suggestion.
-        """
-        errors: dict[str, str] = {}
-        api_key = self.config_entry.data.get(CONF_API_KEY)
-        if not api_key:
-            _LOGGER.warning("No API key found in config entry for options flow")
-            errors["base"] = "missing_api_key"
-            fetched: _Models = {}
-        else:
-            async with AsyncVeniceAIClient(
+    async def _async_validate(self, api_key: str) -> str | None:
+        """Return the error key for an API key, or None if it works."""
+        try:
+            await AsyncVeniceAIClient(
                 api_key=api_key, http_client=get_async_client(self.hass)
-            ) as client:
-                fetched = {
-                    model_type: await _async_list_models(client, model_type, errors)
-                    for model_type in ("text", "tts", "asr")
-                }
-        runtime_data = getattr(self.config_entry, "runtime_data", None)
-        data = runtime_data.coordinator.data if runtime_data else None
-        fetched["image"] = list((data or {}).get("image_models", []))
-        return {
-            model_type: [m for m in models if isinstance(m, dict) and m.get("id")]
-            for model_type, models in fetched.items()
-        }, errors
+            ).validate_api_key()
+        except AuthenticationError:
+            _LOGGER.warning("Venice AI authentication failed")
+            return "invalid_auth"
+        except VeniceAIError as err:
+            _LOGGER.error("Cannot connect to Venice AI: %s", err)
+            return "cannot_connect"
+        except Exception:
+            _LOGGER.exception("Unexpected exception while validating the API key")
+            return "unknown"
+        return None
 
-    async def _fetch_llm_api_options(self) -> list[SelectOptionDict]:
-        """Return the available Home Assistant LLM APIs as select options."""
-        return [
-            SelectOptionDict(label=api.name, value=api.id)
-            for api in llm.async_get_apis(self.hass)
-        ]
-
-    def _validate_numeric_options(
-        self,
-        user_input: dict[str, Any],
-    ) -> dict[str, str]:
-        """Validate numeric option ranges and return per-field error keys."""
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for the API key and create the entry with one of each service."""
         errors: dict[str, str] = {}
-        max_tokens = user_input.get(CONF_MAX_TOKENS)
-        if isinstance(max_tokens, (int, float)) and not (1 <= max_tokens <= 32768):
-            errors[CONF_MAX_TOKENS] = "max_tokens_out_of_range"
-        top_p = user_input.get(CONF_TOP_P)
-        if isinstance(top_p, (int, float)) and not (0.0 <= top_p <= 1.0):
-            errors[CONF_TOP_P] = "top_p_out_of_range"
-        temperature = user_input.get(CONF_TEMPERATURE)
-        if isinstance(temperature, (int, float)) and not (0.0 <= temperature <= 2.0):
-            errors[CONF_TEMPERATURE] = "temperature_out_of_range"
-        max_tool_iter = user_input.get(CONF_MAX_TOOL_ITERATIONS)
-        if isinstance(max_tool_iter, (int, float)) and not (1 <= max_tool_iter <= 20):
-            errors[CONF_MAX_TOOL_ITERATIONS] = "max_tool_iterations_out_of_range"
-        max_history = user_input.get(CONF_MAX_HISTORY_MESSAGES)
-        if isinstance(max_history, (int, float)) and not (1 <= max_history <= 100):
-            errors[CONF_MAX_HISTORY_MESSAGES] = "max_history_messages_out_of_range"
-        tts_speed = user_input.get(CONF_TTS_SPEED)
-        if isinstance(tts_speed, (int, float)) and not (0.25 <= tts_speed <= 4.0):
-            errors[CONF_TTS_SPEED] = "tts_speed_out_of_range"
-        timeout = user_input.get(CONF_REQUEST_TIMEOUT)
-        if isinstance(timeout, (int, float)) and not (10.0 <= timeout <= 300.0):
-            errors[CONF_REQUEST_TIMEOUT] = "request_timeout_out_of_range"
-        prompt = user_input.get(CONF_PROMPT)
-        if prompt is not None and not isinstance(prompt, str):
-            errors[CONF_PROMPT] = "prompt_must_be_string"
-        return errors
-
-    def _build_options_schema(
-        self,
-        chat_options: list[SelectOptionDict],
-        combined_tts_options: list[SelectOptionDict],
-        stt_options: list[SelectOptionDict],
-        llm_api_options: list[SelectOptionDict] | None = None,
-        image_options: list[SelectOptionDict] | None = None,
-    ) -> vol.Schema:
-        """Build the full options schema.
-
-        TTS model and voice are presented as a single combined searchable
-        dropdown (``tts_model_voice``).  The user types a model name to
-        filter, then picks a 'model → voice' entry.  Both are stored
-        atomically on submit — no re-render handshake required.
-        """
-        if llm_api_options is None:
-            llm_api_options = [SelectOptionDict(label="None (disabled)", value="")]
-
-        return vol.Schema(
-            {
-                vol.Optional(CONF_PROMPT): TemplateSelector(),
-                vol.Optional(CONF_PRIVATE_MODELS_ONLY): BooleanSelector(),
-                vol.Optional(CONF_CHAT_MODEL): SelectSelector(
-                    SelectSelectorConfig(
-                        options=chat_options,
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(CONF_MAX_TOKENS): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1, max=32768, step=1, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-                vol.Optional(CONF_TOP_P): NumberSelector(
-                    NumberSelectorConfig(
-                        min=0.0, max=1.0, step=0.05, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-                vol.Optional(CONF_TEMPERATURE): NumberSelector(
-                    NumberSelectorConfig(
-                        min=0.0, max=2.0, step=0.05, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-                vol.Optional(
-                    CONF_LLM_HASS_API,
-                    default=["assist"],  # Default to "assist" for HA control
-                ): SelectSelector(
-                    SelectSelectorConfig(
-                        options=llm_api_options,
-                        mode=SelectSelectorMode.DROPDOWN,
-                        multiple=True,  # allow enabling several APIs at once
-                        sort=False,
-                    )
-                ),
-                vol.Optional(CONF_STRIP_THINKING_RESPONSE): BooleanSelector(),
-                vol.Optional(CONF_DISABLE_THINKING): BooleanSelector(),
-                vol.Optional(CONF_STREAM_RESPONSE): BooleanSelector(),
-                vol.Optional(CONF_MAX_TOOL_ITERATIONS): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1, max=20, step=1, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-                vol.Optional(CONF_MAX_HISTORY_MESSAGES): NumberSelector(
-                    NumberSelectorConfig(
-                        min=1, max=100, step=1, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-                # Single combined TTS model + voice selector.
-                # Entries look like "kokoro → af_heart".  The dropdown is
-                # searchable — type a model name to filter to its voices.
-                vol.Optional(_CONF_TTS_MODEL_VOICE): SelectSelector(
-                    SelectSelectorConfig(
-                        options=combined_tts_options,
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(CONF_TTS_SPEED): NumberSelector(
-                    NumberSelectorConfig(
-                        min=0.25, max=4.0, step=0.25, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-                # STT options
-                vol.Optional(CONF_STT_MODEL): SelectSelector(
-                    SelectSelectorConfig(
-                        options=stt_options,
-                        mode=SelectSelectorMode.DROPDOWN,
-                    )
-                ),
-                vol.Optional(CONF_IMAGE_MODEL): SelectSelector(
-                    SelectSelectorConfig(
-                        options=[
-                            SelectOptionDict(
-                                label="Venice default", value=RECOMMENDED_IMAGE_MODEL
+        if user_input is not None:
+            if error := await self._async_validate(user_input[CONF_API_KEY]):
+                errors["base"] = error
+            else:
+                return self.async_create_entry(
+                    title=DEFAULT_NAME,
+                    data=user_input,
+                    subentries=[
+                        {
+                            "subentry_type": subentry_type,
+                            "data": data,
+                            "title": title,
+                            "unique_id": None,
+                        }
+                        for subentry_type, title, data in (
+                            (
+                                SUBENTRY_CONVERSATION,
+                                DEFAULT_CONVERSATION_NAME,
+                                RECOMMENDED_CONVERSATION_OPTIONS,
                             ),
-                            *(image_options or []),
-                        ],
-                        mode=SelectSelectorMode.DROPDOWN,
-                        custom_value=True,
-                    )
-                ),
-                vol.Optional(CONF_REQUEST_TIMEOUT): NumberSelector(
-                    NumberSelectorConfig(
-                        min=10.0, max=300.0, step=5.0, mode=NumberSelectorMode.SLIDER
-                    )
-                ),
-            }
+                            (
+                                SUBENTRY_AI_TASK,
+                                DEFAULT_AI_TASK_NAME,
+                                RECOMMENDED_AI_TASK_OPTIONS,
+                            ),
+                            (SUBENTRY_TTS, DEFAULT_TTS_NAME, RECOMMENDED_TTS_OPTIONS),
+                            (SUBENTRY_STT, DEFAULT_STT_NAME, RECOMMENDED_STT_OPTIONS),
+                        )
+                    ],
+                )
+
+        return self.async_show_form(
+            step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
+
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle re-authentication when the API key becomes invalid."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Ask for a new API key."""
+        errors: dict[str, str] = {}
+        reauth_entry = self._get_reauth_entry()
+        if user_input is not None:
+            if error := await self._async_validate(user_input[CONF_API_KEY]):
+                errors["base"] = error
+            else:
+                return self.async_update_reload_and_abort(
+                    reauth_entry, data_updates=user_input
+                )
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=STEP_USER_DATA_SCHEMA,
+            errors=errors,
+            description_placeholders={"name": reauth_entry.title},
+        )
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> VeniceAIOptionsFlow:
+        """Get the options flow for this handler."""
+        return VeniceAIOptionsFlow()
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Return the services that can be added to the entry."""
+        return {
+            SUBENTRY_CONVERSATION: ChatSubentryFlow,
+            SUBENTRY_AI_TASK: ChatSubentryFlow,
+            SUBENTRY_TTS: TTSSubentryFlow,
+            SUBENTRY_STT: STTSubentryFlow,
+        }
+
+
+class VeniceAIOptionsFlow(OptionsFlow):
+    """Settings shared by all services of the entry."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Single-step options form: all settings including TTS voice selection.
-
-        TTS model and voice are presented as one combined searchable dropdown
-        (``tts_model_voice``).  Entries are formatted as ``"<model> → <voice>"``.
-        The user types a model name to filter to its voices, picks one entry,
-        and both model and voice are set simultaneously on submit — no
-        re-render, no second page, no abandonment risk.
-        """
-        errors: dict[str, str] = {}
-
-        fetched, fetch_errors = await self._fetch_models()
-        private_only = bool(
-            (user_input or self.config_entry.options).get(
-                CONF_PRIVATE_MODELS_ONLY, RECOMMENDED_PRIVATE_MODELS_ONLY
-            )
-        )
-        if private_only:
-            offered = {
-                model_type: [m for m in models if is_private(m)]
-                for model_type, models in fetched.items()
-            }
-        else:
-            offered = fetched
-        chat_options, tts_info, stt_options, image_options = _select_options(offered)
-        llm_api_options = await self._fetch_llm_api_options()
-        combined_tts_options = _build_combined_tts_options(tts_info)
-
-        if fetch_errors:
-            errors.update(fetch_errors)
-
-        if user_input is not None and not errors:
-            try:
-                # --- Normalise LLM API field ---
-                # If empty string (None selected), remove the key entirely
-                if (
-                    CONF_LLM_HASS_API in user_input
-                    and not user_input[CONF_LLM_HASS_API]
-                ):
-                    user_input = {
-                        k: v for k, v in user_input.items() if k != CONF_LLM_HASS_API
-                    }
-                # Note: We trust the dropdown selection since we validated available
-                # APIs when building the options list. No need to re-validate here.
-
-                # --- Validate numeric ranges ---
-                errors.update(self._validate_numeric_options(user_input))
-                if private_only:
-                    errors.update(_not_private_errors(fetched, user_input))
-
-                if not errors:
-                    # Parse the combined 'model → voice' selector value.
-                    # TTS is optional - if not provided, use defaults.
-                    combined_value = user_input.get(_CONF_TTS_MODEL_VOICE)
-                    parsed = (
-                        _parse_combined_tts_value(combined_value)
-                        if isinstance(combined_value, str) and combined_value
-                        else None
-                    )
-
-                    # Build the final options dict: remove the form-only combined key
-                    final_options = {
-                        k: v
-                        for k, v in user_input.items()
-                        if k != _CONF_TTS_MODEL_VOICE
-                    }
-
-                    if parsed is not None:
-                        tts_model, tts_voice = parsed
-                        final_options[CONF_TTS_MODEL] = tts_model
-                        final_options[CONF_TTS_VOICE] = tts_voice
-                        _LOGGER.debug(
-                            "Options saved: TTS model='%s', voice='%s'",
-                            tts_model,
-                            tts_voice,
-                        )
-                    else:
-                        # TTS not selected - use defaults
-                        final_options[CONF_TTS_MODEL] = RECOMMENDED_TTS_MODEL
-                        final_options[CONF_TTS_VOICE] = RECOMMENDED_TTS_VOICE
-                        _LOGGER.debug(
-                            "TTS not selected, using defaults: model='%s', voice='%s'",
-                            RECOMMENDED_TTS_MODEL,
-                            RECOMMENDED_TTS_VOICE,
-                        )
-
-                    return self.async_create_entry(title="", data=final_options)
-            except Exception as err:
-                _LOGGER.exception("Error processing options: %s", err)
-                errors["base"] = "unknown"
-
-        # --- Build schema and suggested values for this render ---
-        options_schema = self._build_options_schema(
-            chat_options,
-            combined_tts_options,
-            stt_options,
-            llm_api_options,
-            image_options,
-        )
-
-        # Layer: defaults → saved options → current submission.
-        # The combined TTS field is always resolved last so it accurately
-        # reflects either the user's current selection or the saved state.
-        suggested_values: dict[str, Any] = {
-            CONF_PROMPT: DEFAULT_SYSTEM_PROMPT,
-            CONF_CHAT_MODEL: RECOMMENDED_CHAT_MODEL,
-            CONF_MAX_TOKENS: RECOMMENDED_MAX_TOKENS,
-            CONF_TOP_P: RECOMMENDED_TOP_P,
-            CONF_TEMPERATURE: RECOMMENDED_TEMPERATURE,
-            CONF_LLM_HASS_API: ["assist"],  # Default to "assist" for HA control
-            CONF_STRIP_THINKING_RESPONSE: RECOMMENDED_STRIP_THINKING_RESPONSE,
-            CONF_DISABLE_THINKING: RECOMMENDED_DISABLE_THINKING,
-            CONF_STREAM_RESPONSE: RECOMMENDED_STREAM_RESPONSE,
-            CONF_MAX_TOOL_ITERATIONS: RECOMMENDED_MAX_TOOL_ITERATIONS,
-            CONF_MAX_HISTORY_MESSAGES: RECOMMENDED_MAX_HISTORY_MESSAGES,
-            CONF_PRIVATE_MODELS_ONLY: RECOMMENDED_PRIVATE_MODELS_ONLY,
-            CONF_TTS_SPEED: RECOMMENDED_TTS_SPEED,
-            CONF_STT_MODEL: RECOMMENDED_STT_MODEL,
-            CONF_REQUEST_TIMEOUT: RECOMMENDED_REQUEST_TIMEOUT,
-            CONF_IMAGE_MODEL: RECOMMENDED_IMAGE_MODEL,
-        }
-        # Saved options may contain CONF_TTS_MODEL / CONF_TTS_VOICE separately —
-        # those keys are not in the schema and are harmlessly ignored by
-        # add_suggested_values_to_schema, but they are used by
-        # _resolve_combined_tts_value below.
-        suggested_values.update(self.config_entry.options)
-        # The control field is now a multiple-select. Installs created with the
-        # earlier single-select stored it as a plain string; coerce to a list so
-        # the widget pre-selects it correctly (and an empty string -> []).
-        _llm_val = suggested_values.get(CONF_LLM_HASS_API)
-        if isinstance(_llm_val, str):
-            suggested_values[CONF_LLM_HASS_API] = [_llm_val] if _llm_val else []
+        """Manage the shared settings."""
         if user_input is not None:
-            suggested_values.update(user_input)
+            return self.async_create_entry(data=user_input)
 
-        # Always resolve the combined TTS field last so it reflects the correct
-        # pre-selection regardless of what was merged above.
-        suggested_values[_CONF_TTS_MODEL_VOICE] = _resolve_combined_tts_value(
-            tts_info, user_input, self.config_entry.options
+        entry = self.config_entry
+        runtime_data = getattr(entry, "runtime_data", None)
+        data = runtime_data.coordinator.data if runtime_data else None
+        image_models = [
+            m
+            for m in (data or {}).get("image_models", [])
+            if m.get("id") and (not _private_only(entry) or is_private(m))
+        ]
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_PRIVATE_MODELS_ONLY): BooleanSelector(),
+                vol.Optional(CONF_IMAGE_MODEL): _select(
+                    [
+                        SelectOptionDict(
+                            label="Venice default", value=RECOMMENDED_IMAGE_MODEL
+                        ),
+                        *(
+                            SelectOptionDict(label=_model_label(m), value=m["id"])
+                            for m in image_models
+                        ),
+                    ],
+                    custom_value=True,
+                ),
+                vol.Optional(CONF_REQUEST_TIMEOUT): _number(
+                    10, 300, 5, NumberSelectorMode.SLIDER
+                ),
+            }
         )
-
+        suggested = {
+            CONF_PRIVATE_MODELS_ONLY: RECOMMENDED_PRIVATE_MODELS_ONLY,
+            CONF_IMAGE_MODEL: RECOMMENDED_IMAGE_MODEL,
+            CONF_REQUEST_TIMEOUT: RECOMMENDED_REQUEST_TIMEOUT,
+            **entry.options,
+        }
         return self.async_show_form(
             step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                options_schema, suggested_values
-            ),
-            errors=errors,
+            data_schema=self.add_suggested_values_to_schema(schema, suggested),
         )
+
+
+class _SubentryFlow(ConfigSubentryFlow):
+    """Common steps of the subentry flows."""
+
+    options: dict[str, Any]
+    recommended: Mapping[str, Any] = {}
+
+    @property
+    def _is_new(self) -> bool:
+        return self.source == "user"
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Add a subentry."""
+        self.options = dict(self.recommended)
+        return await self.async_step_init()
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Reconfigure a subentry."""
+        self.options = dict(self._get_reconfigure_subentry().data)
+        return await self.async_step_init()
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Show the first step."""
+        raise NotImplementedError
+
+    def _name_field(self, default: str) -> VolDictType:
+        return {vol.Required(CONF_NAME, default=default): str} if self._is_new else {}
+
+    async def _async_models(self, model_type: str) -> list[dict[str, Any]]:
+        """List the models of a type, live, falling back to the last refresh."""
+        entry = cast("VeniceAIConfigEntry", self._get_entry())
+        try:
+            models = await entry.runtime_data.client.models.list(model_type=model_type)
+        except VeniceAIError as err:
+            _LOGGER.warning("Failed to fetch %s models: %s", model_type, err)
+            data = cast(
+                Mapping[str, list[dict[str, Any]]],
+                entry.runtime_data.coordinator.data or {},
+            )
+            models = list(data.get(_COORDINATOR_KEYS[model_type], []))
+        return [
+            m
+            for m in models
+            if isinstance(m, dict)
+            and m.get("id")
+            and (not _private_only(entry) or is_private(m))
+        ]
+
+    def _form(self, step_id: str, schema: VolDictType) -> SubentryFlowResult:
+        return self.async_show_form(
+            step_id=step_id,
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(schema), self.options
+            ),
+        )
+
+    def _async_finish(self) -> SubentryFlowResult:
+        if self._is_new:
+            return self.async_create_entry(
+                title=self.options.pop(CONF_NAME), data=self.options
+            )
+        return self.async_update_and_abort(
+            self._get_entry(), self._get_reconfigure_subentry(), data=self.options
+        )
+
+    def _entry_loaded(self) -> bool:
+        return self._get_entry().state is ConfigEntryState.LOADED
+
+
+class ChatSubentryFlow(_SubentryFlow):
+    """Conversation agent or AI Task."""
+
+    @property
+    def _advanced(self) -> dict[str, Any]:
+        if self._subentry_type == SUBENTRY_AI_TASK:
+            return _AI_TASK_ADVANCED
+        return _CONVERSATION_ADVANCED
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Add a conversation agent or AI Task."""
+        self.recommended = (
+            RECOMMENDED_AI_TASK_OPTIONS
+            if self._subentry_type == SUBENTRY_AI_TASK
+            else RECOMMENDED_CONVERSATION_OPTIONS
+        )
+        return await super().async_step_user(user_input)
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Choose the model, and for conversations the prompt and APIs."""
+        if not self._entry_loaded():
+            return self.async_abort(reason="entry_not_loaded")
+
+        if user_input is not None:
+            if not user_input.get(CONF_LLM_HASS_API):
+                user_input.pop(CONF_LLM_HASS_API, None)
+                self.options.pop(CONF_LLM_HASS_API, None)
+            if self._subentry_type == SUBENTRY_CONVERSATION:
+                user_input.setdefault(CONF_PROMPT, "")
+            self.options.update(user_input)
+            if user_input[CONF_RECOMMENDED]:
+                for key in self._advanced:
+                    self.options.pop(key, None)
+                return self._async_finish()
+            return await self.async_step_advanced()
+
+        conversation = self._subentry_type == SUBENTRY_CONVERSATION
+        default_name = (
+            DEFAULT_CONVERSATION_NAME if conversation else DEFAULT_AI_TASK_NAME
+        )
+        schema = self._name_field(default_name)
+        if conversation:
+            apis = {api.id: api.name for api in llm.async_get_apis(self.hass)}
+            if suggested := self.options.get(CONF_LLM_HASS_API):
+                if isinstance(suggested, str):
+                    suggested = [suggested]
+                self.options[CONF_LLM_HASS_API] = [a for a in suggested if a in apis]
+            self.options.setdefault(CONF_PROMPT, DEFAULT_SYSTEM_PROMPT)
+            schema[vol.Optional(CONF_PROMPT)] = TemplateSelector()
+            schema[vol.Optional(CONF_LLM_HASS_API)] = SelectSelector(
+                SelectSelectorConfig(
+                    options=[
+                        SelectOptionDict(label=name, value=api_id)
+                        for api_id, name in apis.items()
+                    ],
+                    multiple=True,
+                )
+            )
+        models = parse_models(await self._async_models("text"))
+        self.options.setdefault(CONF_CHAT_MODEL, RECOMMENDED_CHAT_MODEL)
+        schema[vol.Required(CONF_CHAT_MODEL)] = _select(
+            [SelectOptionDict(label=m.label, value=m.id) for m in models.values()]
+            or [
+                SelectOptionDict(
+                    label=RECOMMENDED_CHAT_MODEL, value=RECOMMENDED_CHAT_MODEL
+                )
+            ]
+        )
+        schema[
+            vol.Required(
+                CONF_RECOMMENDED, default=self.options.get(CONF_RECOMMENDED, True)
+            )
+        ] = bool
+        return self._form("init", schema)
+
+    async def async_step_advanced(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Tune sampling, reasoning and conversation handling."""
+        if user_input is not None:
+            for key in self._advanced:
+                self.options.pop(key, None)
+            self.options.update(user_input)
+            return self._async_finish()
+
+        for key, value in self._advanced.items():
+            self.options.setdefault(key, value)
+        schema: VolDictType = {
+            vol.Optional(CONF_MAX_TOKENS): _number(1, 32768, 1, NumberSelectorMode.BOX),
+            vol.Optional(CONF_TEMPERATURE): _number(
+                0, 2, 0.05, NumberSelectorMode.SLIDER
+            ),
+            vol.Optional(CONF_TOP_P): _number(0, 1, 0.05, NumberSelectorMode.SLIDER),
+            vol.Optional(CONF_DISABLE_THINKING): BooleanSelector(),
+            vol.Optional(CONF_THINKING_TAGS): TextSelector(),
+            vol.Optional(CONF_VENICE_SYSTEM_PROMPT): BooleanSelector(),
+        }
+        if self._subentry_type == SUBENTRY_AI_TASK:
+            schema[vol.Optional(CONF_STRUCTURE_PROMPT)] = TextSelector(
+                TextSelectorConfig(multiline=True)
+            )
+        else:
+            schema.update(
+                {
+                    vol.Optional(CONF_STRIP_THINKING_RESPONSE): BooleanSelector(),
+                    vol.Optional(CONF_STREAM_RESPONSE): BooleanSelector(),
+                    vol.Optional(CONF_MAX_TOOL_ITERATIONS): _number(
+                        1, 20, 1, NumberSelectorMode.SLIDER
+                    ),
+                    vol.Optional(CONF_MAX_HISTORY_MESSAGES): _number(
+                        1, 100, 1, NumberSelectorMode.SLIDER
+                    ),
+                }
+            )
+        return self._form("advanced", schema)
+
+
+class TTSSubentryFlow(_SubentryFlow):
+    """Text-to-speech: the model first, then one of its voices."""
+
+    recommended = RECOMMENDED_TTS_OPTIONS
+    _models: dict[str, TTSModel]
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Choose the model."""
+        if not self._entry_loaded():
+            return self.async_abort(reason="entry_not_loaded")
+
+        if user_input is not None:
+            self.options.update(user_input)
+            return await self.async_step_voice()
+
+        self._models = parse_tts_models(await self._async_models("tts")) or {
+            RECOMMENDED_TTS_MODEL: TTSModel(
+                RECOMMENDED_TTS_MODEL, (RECOMMENDED_TTS_VOICE,)
+            )
+        }
+        schema = self._name_field(DEFAULT_TTS_NAME)
+        schema[vol.Required(CONF_TTS_MODEL)] = _select(
+            [
+                SelectOptionDict(label=_tts_model_label(model), value=model.id)
+                for model in sorted(self._models.values(), key=lambda m: m.id)
+            ]
+        )
+        return self._form("init", schema)
+
+    async def async_step_voice(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Choose the voice and speed."""
+        if user_input is not None:
+            self.options.update(user_input)
+            return self._async_finish()
+
+        model_id = self.options[CONF_TTS_MODEL]
+        model = self._models.get(model_id)
+        voices = model.voices if model else (self.options.get(CONF_TTS_VOICE),)
+        if self.options.get(CONF_TTS_VOICE) not in voices:
+            self.options[CONF_TTS_VOICE] = voices[0]
+        self.options.setdefault(CONF_TTS_SPEED, RECOMMENDED_TTS_SPEED)
+        schema: VolDictType = {
+            vol.Required(CONF_TTS_VOICE): _select(
+                [
+                    SelectOptionDict(label=_voice_label(voice), value=voice)
+                    for voice in voices
+                    if voice
+                ]
+            ),
+            vol.Optional(CONF_TTS_SPEED): _number(
+                0.25, 4, 0.05, NumberSelectorMode.SLIDER
+            ),
+        }
+        return self.async_show_form(
+            step_id="voice",
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema(schema), self.options
+            ),
+            description_placeholders={"model": model_id},
+        )
+
+
+class STTSubentryFlow(_SubentryFlow):
+    """Speech-to-text."""
+
+    recommended = RECOMMENDED_STT_OPTIONS
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> SubentryFlowResult:
+        """Choose the model."""
+        if not self._entry_loaded():
+            return self.async_abort(reason="entry_not_loaded")
+
+        if user_input is not None:
+            self.options.update(user_input)
+            return self._async_finish()
+
+        schema = self._name_field(DEFAULT_STT_NAME)
+        schema[vol.Required(CONF_STT_MODEL)] = _select(
+            [
+                SelectOptionDict(label=_model_label(m), value=m["id"])
+                for m in await self._async_models("asr")
+            ]
+            or [
+                SelectOptionDict(
+                    label=RECOMMENDED_STT_MODEL, value=RECOMMENDED_STT_MODEL
+                )
+            ]
+        )
+        return self._form("init", schema)

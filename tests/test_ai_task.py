@@ -12,14 +12,14 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 import voluptuous as vol
 
-from custom_components.venice_ai.const import CONF_CHAT_MODEL, DOMAIN
+from custom_components.venice_ai.const import CONF_CHAT_MODEL, SUBENTRY_AI_TASK
 
-from .conftest import SCHEMA_MODEL
+from .conftest import SCHEMA_MODEL, SUBENTRY_IDS, update_subentry
 
 
 def _entity_id(hass: HomeAssistant, entry: MockConfigEntry) -> str:
     entity_id = er.async_get(hass).async_get_entity_id(
-        "ai_task", DOMAIN, f"{entry.entry_id}_task"
+        "ai_task", entry.domain, SUBENTRY_IDS[SUBENTRY_AI_TASK]
     )
     assert entity_id is not None
     return entity_id
@@ -55,9 +55,10 @@ async def test_generate_structured_data_native_schema(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
     """Models with response schema support get a native response_format."""
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_CHAT_MODEL: SCHEMA_MODEL}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_AI_TASK, **{CONF_CHAT_MODEL: SCHEMA_MODEL}
     )
+    await hass.async_block_till_done()
     mock_client.chat.create_non_streaming.return_value = {
         "choices": [{"message": {"content": '{"name": "Bob"}'}}]
     }
@@ -82,9 +83,10 @@ async def test_generate_structured_data_with_selectors(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
     """Structures built from selectors, as ai_task.generate_data does, convert."""
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_CHAT_MODEL: SCHEMA_MODEL}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_AI_TASK, **{CONF_CHAT_MODEL: SCHEMA_MODEL}
     )
+    await hass.async_block_till_done()
     mock_client.chat.create_non_streaming.return_value = {
         "choices": [{"message": {"content": '{"name": "Bob", "age": 3}'}}]
     }

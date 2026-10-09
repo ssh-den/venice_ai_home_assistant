@@ -90,9 +90,7 @@ class ModelInfo:
     def label(self) -> str:
         """Human readable label for model selectors."""
         tags: list[str] = []
-        if self.supports_e2ee:
-            tags.append("E2EE")
-        elif self.supports_tee:
+        if self.supports_tee or self.supports_e2ee:
             tags.append("TEE")
         elif self.privacy:
             tags.append(self.privacy.capitalize())

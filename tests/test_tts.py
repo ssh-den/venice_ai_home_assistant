@@ -19,10 +19,11 @@ from custom_components.venice_ai.const import (
     CONF_TTS_SPEED,
     CONF_TTS_VOICE,
     RECOMMENDED_TTS_MODEL,
+    SUBENTRY_TTS,
 )
 from custom_components.venice_ai.tts import VeniceAITTS
 
-from .conftest import WAV_TTS_MODEL
+from .conftest import WAV_TTS_MODEL, update_subentry
 
 
 def _entity(hass: HomeAssistant) -> VeniceAITTS:
@@ -39,10 +40,13 @@ async def _message(*parts: str) -> AsyncGenerator[str]:
 async def test_get_tts_audio_uses_entry_options(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
-    hass.config_entries.async_update_entry(
+    update_subentry(
+        hass,
         setup_integration,
-        options={CONF_TTS_VOICE: "af_heart", CONF_TTS_SPEED: 1.5},
+        SUBENTRY_TTS,
+        **{CONF_TTS_VOICE: "af_heart", CONF_TTS_SPEED: 1.5},
     )
+    await hass.async_block_till_done()
     mock_client.speech.generate = AsyncMock(return_value=b"audio")
 
     result = await _entity(hass).async_get_tts_audio("Hello", "en-US")
@@ -74,9 +78,10 @@ async def test_get_tts_audio_splits_long_messages(
 async def test_wav_only_model_joins_audio(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_TTS_MODEL: WAV_TTS_MODEL}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_TTS, **{CONF_TTS_MODEL: WAV_TTS_MODEL}
     )
+    await hass.async_block_till_done()
     mock_client.speech.generate = AsyncMock(
         side_effect=[pcm_to_wav(b"\x01\x02"), pcm_to_wav(b"\x03\x04")]
     )
@@ -128,9 +133,10 @@ async def test_stream_tts_audio_by_sentence(
 async def test_stream_wav_is_one_stream(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_TTS_MODEL: WAV_TTS_MODEL}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_TTS, **{CONF_TTS_MODEL: WAV_TTS_MODEL}
     )
+    await hass.async_block_till_done()
     mock_client.speech.generate = AsyncMock(
         side_effect=[pcm_to_wav(b"\x01\x02"), pcm_to_wav(b"\x03\x04")]
     )
@@ -166,17 +172,21 @@ async def test_languages_and_voices_follow_model(
     assert voices is not None
     assert [v.voice_id for v in voices] == ["jf_alpha"]
 
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_TTS_MODEL: WAV_TTS_MODEL}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_TTS, **{CONF_TTS_MODEL: WAV_TTS_MODEL}
     )
+    await hass.async_block_till_done()
+    entity = _entity(hass)
     assert "ru" in entity.supported_languages
     voices = entity.async_get_supported_voices("ru")
     assert voices is not None
     assert [v.voice_id for v in voices] == ["tara"]
 
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_TTS_MODEL: "unknown"}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_TTS, **{CONF_TTS_MODEL: "unknown"}
     )
+    await hass.async_block_till_done()
+    entity = _entity(hass)
     assert entity.async_get_supported_voices("en") is None
     assert "ru" in entity.supported_languages
 

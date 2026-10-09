@@ -22,5 +22,5 @@
         "sentence-stream>=1.1.0",
         "voluptuous-openapi>=0.0.4"
     ],
-    "version": "2.1.0"
+    "version": "3.0.0"
 }

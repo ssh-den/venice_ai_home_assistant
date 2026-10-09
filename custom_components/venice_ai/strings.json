@@ -2,16 +2,17 @@
   "config": {
     "step": {
       "user": {
-        "title": "Venice AI Setup",
+        "title": "Venice AI",
+        "description": "Enter your Venice AI API key. A conversation agent, an AI Task, text-to-speech and speech-to-text are added; you can add more of each later.",
         "data": {
-          "api_key": "Venice AI API Key"
+          "api_key": "API key"
         }
       },
       "reauth_confirm": {
         "title": "Re-authenticate Venice AI",
         "description": "The Venice AI API key for {name} is no longer valid. Please enter a new API key to reconnect.",
         "data": {
-          "api_key": "Venice AI API Key"
+          "api_key": "API key"
         }
       }
     },
@@ -27,71 +28,183 @@
   "options": {
     "step": {
       "init": {
-        "title": "Venice AI Options",
-        "description": "Configure Venice AI settings. Models tagged with tools can control Home Assistant.",
+        "title": "Venice AI",
+        "description": "Settings shared by all services of this entry. Each service has its own settings under Reconfigure.",
         "data": {
-          "chat_model": "AI Model",
-          "prompt": "System Prompt",
-          "llm_hass_api": "Control Home Assistant",
-          "temperature": "Temperature (0-2)",
-          "top_p": "Top P (0-1)",
-          "max_tokens": "Max Tokens",
-          "strip_thinking_response": "Strip thinking response (for reasoning models)",
-          "disable_thinking": "Disable thinking (for reasoning models)",
-          "max_tool_iterations": "Max Tool Iterations",
-          "max_history_messages": "Conversation history",
           "private_models_only": "Private models only",
-          "tts_model_voice": "TTS Voice (Model → Voice)",
-          "tts_speed": "TTS Speed",
-          "stt_model": "STT Model",
-          "stream_response": "Stream responses",
-          "request_timeout": "Request timeout (seconds)",
-          "image_model": "Image model"
+          "image_model": "Image model",
+          "request_timeout": "Request timeout (seconds)"
         },
         "data_description": {
-          "chat_model": "Venice AI text model used for conversations and AI tasks.",
-          "prompt": "Instructions that define the assistant's personality. Supports templates.",
-          "llm_hass_api": "Home Assistant APIs the model may use to read and control your devices.",
-          "temperature": "Higher values make answers more creative, lower values more focused.",
-          "top_p": "Limits sampling to the most likely tokens whose probabilities add up to this value.",
-          "max_tokens": "Maximum number of tokens the model may generate in a single answer.",
-          "strip_thinking_response": "Remove <think> reasoning blocks from answers of reasoning models.",
-          "disable_thinking": "Ask reasoning models to skip the thinking phase for faster, cheaper answers.",
-          "stream_response": "Receive the answer incrementally, which lowers the time to the first words.",
-          "max_tool_iterations": "How many rounds of Home Assistant tool calls the model may make per request.",
-          "max_history_messages": "How many earlier messages of the conversation are sent with each request. The current question is always sent. Fewer messages send less of the conversation to Venice AI.",
-          "private_models_only": "Offer only models that Venice AI runs privately, in a TEE or with E2EE, so prompts and audio are not passed to providers that may keep them. Reopen the options after changing this to see the filtered lists.",
-          "tts_model_voice": "Text-to-speech model and voice. Type a model name to filter the list. Kokoro voices are grouped by language; pick another model for languages Kokoro does not speak.",
-          "tts_speed": "Playback speed of generated speech.",
-          "stt_model": "Speech-to-text model used to transcribe voice commands. Parakeet covers European languages, Whisper-based models almost every language.",
-          "request_timeout": "How long to wait for a Venice AI response before giving up.",
-          "image_model": "Model used by the generate_image action when no model is given."
+          "private_models_only": "Offer only models that Venice AI runs privately or in a TEE, so prompts and audio are not passed to providers that may keep them. A repair issue reports services that use other models.",
+          "image_model": "Model used by the generate_image action when no model is given.",
+          "request_timeout": "How long to wait for a Venice AI response before giving up."
+        }
+      }
+    }
+  },
+  "config_subentries": {
+    "conversation": {
+      "entry_type": "Conversation agent",
+      "initiate_flow": {
+        "user": "Add conversation agent",
+        "reconfigure": "Reconfigure conversation agent"
+      },
+      "abort": {
+        "entry_not_loaded": "Cannot change services while the Venice AI entry is not loaded."
+      },
+      "step": {
+        "init": {
+          "data": {
+            "name": "Name",
+            "prompt": "Instructions",
+            "llm_hass_api": "Control Home Assistant",
+            "chat_model": "Model",
+            "recommended": "Recommended settings"
+          },
+          "data_description": {
+            "prompt": "Instructions sent to the model with every conversation. Supports templates.",
+            "llm_hass_api": "Home Assistant APIs the model may use to read and control your devices.",
+            "chat_model": "Venice AI text model. TEE models run in an attested hardware enclave; models tagged with tools can control Home Assistant.",
+            "recommended": "Use the recommended sampling and reasoning settings. Turn off to adjust them on the next step."
+          }
+        },
+        "advanced": {
+          "title": "Advanced settings",
+          "data": {
+            "max_tokens": "Max tokens",
+            "temperature": "Temperature",
+            "top_p": "Top P",
+            "disable_thinking": "Disable thinking",
+            "thinking_tags": "Thinking tags",
+            "include_venice_system_prompt": "Venice system prompt",
+            "strip_thinking_response": "Strip thinking",
+            "stream_response": "Stream responses",
+            "max_tool_iterations": "Max tool iterations",
+            "max_history_messages": "Conversation history"
+          },
+          "data_description": {
+            "max_tokens": "Maximum number of tokens the model may generate in a single answer.",
+            "temperature": "Higher values make answers more creative, lower values more focused.",
+            "top_p": "Limits sampling to the most likely tokens whose probabilities add up to this value.",
+            "disable_thinking": "Ask reasoning models to skip the thinking phase for faster, cheaper answers.",
+            "thinking_tags": "Names of the tags that wrap reasoning in the answers of the model, separated by commas, for example think or think, thought.",
+            "include_venice_system_prompt": "Let Venice AI add its own system prompt to every request, next to yours.",
+            "strip_thinking_response": "Keep the reasoning wrapped in the thinking tags out of the answer.",
+            "stream_response": "Receive the answer incrementally, which lowers the time to the first words.",
+            "max_tool_iterations": "How many rounds of Home Assistant tool calls the model may make per request.",
+            "max_history_messages": "How many earlier messages of the conversation are sent with each request. The current question is always sent."
+          }
         }
       }
     },
-    "error": {
-      "invalid_auth": "Invalid API key",
-      "missing_api_key": "The config entry has no API key. Please re-authenticate.",
-      "unknown": "Unexpected error",
-      "max_tokens_out_of_range": "Max tokens must be between 1 and 32768.",
-      "top_p_out_of_range": "Top P must be between 0 and 1.",
-      "temperature_out_of_range": "Temperature must be between 0 and 2.",
-      "max_tool_iterations_out_of_range": "Max tool iterations must be between 1 and 20.",
-      "max_history_messages_out_of_range": "Conversation history must be between 1 and 100 messages.",
-      "model_not_private": "Venice AI does not run this model privately. Pick a Private, TEE or E2EE model, or turn off Private models only.",
-      "tts_speed_out_of_range": "TTS speed must be between 0.25 and 4.",
-      "request_timeout_out_of_range": "Request timeout must be between 10 and 300 seconds.",
-      "prompt_must_be_string": "The system prompt must be text."
+    "ai_task_data": {
+      "entry_type": "AI Task",
+      "initiate_flow": {
+        "user": "Add AI Task",
+        "reconfigure": "Reconfigure AI Task"
+      },
+      "abort": {
+        "entry_not_loaded": "Cannot change services while the Venice AI entry is not loaded."
+      },
+      "step": {
+        "init": {
+          "data": {
+            "name": "Name",
+            "chat_model": "Model",
+            "recommended": "Recommended settings"
+          },
+          "data_description": {
+            "chat_model": "Venice AI text model. TEE models run in an attested hardware enclave; models tagged with tools can control Home Assistant.",
+            "recommended": "Use the recommended sampling and reasoning settings. Turn off to adjust them on the next step."
+          }
+        },
+        "advanced": {
+          "title": "Advanced settings",
+          "data": {
+            "max_tokens": "Max tokens",
+            "temperature": "Temperature",
+            "top_p": "Top P",
+            "disable_thinking": "Disable thinking",
+            "thinking_tags": "Thinking tags",
+            "include_venice_system_prompt": "Venice system prompt",
+            "structure_prompt": "Structured output instructions"
+          },
+          "data_description": {
+            "max_tokens": "Maximum number of tokens the model may generate in a single answer.",
+            "temperature": "Higher values make answers more creative, lower values more focused.",
+            "top_p": "Limits sampling to the most likely tokens whose probabilities add up to this value.",
+            "disable_thinking": "Ask reasoning models to skip the thinking phase for faster, cheaper answers.",
+            "thinking_tags": "Names of the tags that wrap reasoning in the answers of the model, separated by commas, for example think or think, thought.",
+            "include_venice_system_prompt": "Let Venice AI add its own system prompt to every request, next to yours.",
+            "structure_prompt": "Sent with the JSON schema of the requested structure to models that do not support structured output."
+          }
+        }
+      }
+    },
+    "tts": {
+      "entry_type": "Text-to-speech",
+      "initiate_flow": {
+        "user": "Add text-to-speech",
+        "reconfigure": "Reconfigure text-to-speech"
+      },
+      "abort": {
+        "entry_not_loaded": "Cannot change services while the Venice AI entry is not loaded."
+      },
+      "step": {
+        "init": {
+          "data": {
+            "name": "Name",
+            "tts_model": "Model"
+          },
+          "data_description": {
+            "tts_model": "Text-to-speech model, with its privacy level and the number of languages it speaks. The voice is chosen on the next step."
+          }
+        },
+        "voice": {
+          "title": "Voice",
+          "description": "Voices of {model}.",
+          "data": {
+            "tts_voice": "Voice",
+            "tts_speed": "Speed"
+          },
+          "data_description": {
+            "tts_voice": "Kokoro voices show their language.",
+            "tts_speed": "Playback speed of generated speech."
+          }
+        }
+      }
+    },
+    "stt": {
+      "entry_type": "Speech-to-text",
+      "initiate_flow": {
+        "user": "Add speech-to-text",
+        "reconfigure": "Reconfigure speech-to-text"
+      },
+      "abort": {
+        "entry_not_loaded": "Cannot change services while the Venice AI entry is not loaded."
+      },
+      "step": {
+        "init": {
+          "data": {
+            "name": "Name",
+            "stt_model": "Model"
+          },
+          "data_description": {
+            "stt_model": "Speech-to-text model used to transcribe voice commands. Parakeet covers European languages, Whisper-based models almost every language."
+          }
+        }
+      }
     }
   },
   "issues": {
     "not_private_model": {
-      "title": "Venice AI {model_type} model is not private",
-      "description": "Private models only is on, but Venice AI no longer runs the model {model} privately. Pick a Private, TEE or E2EE model in the integration options."
+      "title": "Venice AI model of {name} is not private",
+      "description": "Private models only is on, but Venice AI does not run the model {model} of {name} privately or in a TEE. Pick another model for {name}."
     },
     "unavailable_model": {
-      "title": "Unavailable Venice AI {model_type} model",
-      "description": "The model {model} is no longer available from Venice AI. Please update your integration settings to select a supported model."
+      "title": "Venice AI model of {name} is unavailable",
+      "description": "Venice AI no longer offers the model {model} of {name}. Pick another model for {name}."
     },
     "auth_failure": {
       "title": "Venice AI authentication failed",
@@ -132,9 +245,6 @@
     "invalid_config_entry": {
       "message": "Config entry {config_entry} is not a Venice AI entry."
     },
-    "entity_not_found": {
-      "message": "Venice AI Task entity not found for config entry {entry_id}."
-    },
     "config_entry_not_loaded": {
       "message": "The Venice AI config entry {config_entry} is not loaded."
     },
@@ -170,24 +280,6 @@
         "style": {
           "name": "Style",
           "description": "Image style"
-        }
-      }
-    },
-    "ai_task": {
-      "name": "VeniceAI AI Task",
-      "description": "Generate structured data using Venice AI.",
-      "fields": {
-        "config_entry": {
-          "name": "Config Entry",
-          "description": "The Venice AI config entry to use for this service call."
-        },
-        "task": {
-          "name": "Task",
-          "description": "Task description"
-        },
-        "structure": {
-          "name": "Structure",
-          "description": "Expected response structure or schema"
         }
       }
     }

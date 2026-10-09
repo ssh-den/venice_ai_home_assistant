@@ -4,6 +4,49 @@ All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [3.0.0] — 2026-10-09
+
+The conversation agent, AI Task, text-to-speech and speech-to-text are now
+services of the entry, as in the integrations built into Home Assistant.
+Existing entries migrate on the first start: their settings move into one
+service of each kind and the entity IDs stay the same. The `venice_ai.ai_task`
+action is gone; use `ai_task.generate_data`.
+
+### Added
+- Services: add, reconfigure and remove conversation agents, AI Tasks,
+  text-to-speech and speech-to-text, each with its own model, settings and
+  device. The entry keeps the API key, the usage sensors and the shared
+  settings: private models only, the image model and the request timeout.
+- Text-to-speech settings pick the model first, labeled with its privacy and
+  number of languages, and then one of its voices.
+- **Thinking tags**: the names of the tags that wrap reasoning, for models that
+  use something other than `think`.
+- **Venice system prompt**, off by default.
+- **Structured output instructions** of the AI Task, sent with the JSON schema
+  to models without native structured output.
+- [docs/configuration.md](docs/configuration.md) lists every setting.
+
+### Changed
+- Each service has a device of its own, named after the service. The usage
+  sensors stay on the entry device.
+- New entries let the conversation agent control Home Assistant through Assist.
+- Model labels show TEE for E2EE-capable models, since the integration does not
+  encrypt requests end to end. **Private models only** lists Private and TEE
+  models.
+
+### Security
+- Venice no longer adds its own system prompt to requests; it used to by
+  default.
+- Diagnostics hide the instructions of every service.
+
+### Removed
+- The `venice_ai.ai_task` action, which duplicated `ai_task.generate_data` and
+  added its own JSON instructions to the task.
+
+### Fixed
+- The description of **Strip thinking response** broke the options form with a
+  translation error.
+
 ## [2.1.0] — 2026-10-09
 
 ### Added
@@ -184,6 +227,7 @@ fork and differs noticeably from upstream.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
+[3.0.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v3.0.0
 [2.1.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.1.0
 [2.0.1]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ssh-den/venice_ai_home_assistant

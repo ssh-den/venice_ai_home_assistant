@@ -21,7 +21,7 @@ async def test_services_registered_without_loaded_entry(
     """Services are available as soon as the integration is set up."""
     assert await async_setup_component(hass, DOMAIN, {})
     assert hass.services.has_service(DOMAIN, "generate_image")
-    assert hass.services.has_service(DOMAIN, "ai_task")
+    assert not hass.services.has_service(DOMAIN, "ai_task")
 
 
 async def test_generate_image(
@@ -88,69 +88,6 @@ async def test_generate_image_wrong_domain(
             return_response=True,
         )
     assert exc.value.translation_key == "invalid_config_entry"
-
-
-async def test_ai_task_plain_text(
-    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
-) -> None:
-    """The ai_task service returns the model's text answer."""
-    mock_client.chat.create_non_streaming.return_value = {
-        "choices": [{"message": {"content": "Hello there"}}]
-    }
-    result = await hass.services.async_call(
-        DOMAIN,
-        "ai_task",
-        {"config_entry": setup_integration.entry_id, "task": "Say hi"},
-        blocking=True,
-        return_response=True,
-    )
-    assert result is not None
-    assert result["data"] == "Hello there"
-    messages = mock_client.chat.create_non_streaming.call_args.kwargs["messages"]
-    assert [m["content"] for m in messages if m["role"] == "user"] == ["Say hi"]
-
-
-async def test_ai_task_structured(
-    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
-) -> None:
-    """A structure request is parsed into JSON, tolerating code fences."""
-    mock_client.chat.create_non_streaming.return_value = {
-        "choices": [{"message": {"content": '```json\n{"temp": 21}\n```'}}]
-    }
-    result = await hass.services.async_call(
-        DOMAIN,
-        "ai_task",
-        {
-            "config_entry": setup_integration.entry_id,
-            "task": "Give me the temperature",
-            "structure": '{"temp": "number"}',
-        },
-        blocking=True,
-        return_response=True,
-    )
-    assert result is not None
-    assert result["data"] == {"temp": 21}
-
-
-async def test_ai_task_invalid_json(
-    hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
-) -> None:
-    """Non-JSON output for a structured task raises an error."""
-    mock_client.chat.create_non_streaming.return_value = {
-        "choices": [{"message": {"content": "not json"}}]
-    }
-    with pytest.raises(HomeAssistantError, match="invalid JSON"):
-        await hass.services.async_call(
-            DOMAIN,
-            "ai_task",
-            {
-                "config_entry": setup_integration.entry_id,
-                "task": "Give me the temperature",
-                "structure": '{"temp": "number"}',
-            },
-            blocking=True,
-            return_response=True,
-        )
 
 
 async def test_generate_image_uses_requested_model(

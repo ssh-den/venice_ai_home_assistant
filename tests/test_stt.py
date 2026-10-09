@@ -12,8 +12,10 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.venice_ai.audio import pcm_to_wav
 from custom_components.venice_ai.client import NetworkError
-from custom_components.venice_ai.const import CONF_STT_MODEL
+from custom_components.venice_ai.const import CONF_STT_MODEL, SUBENTRY_STT
 from custom_components.venice_ai.stt import VeniceAISTT
+
+from .conftest import update_subentry
 
 
 def _entity(hass: HomeAssistant) -> VeniceAISTT:
@@ -45,9 +47,10 @@ async def _audio(*chunks: bytes) -> AsyncGenerator[bytes]:
 async def test_transcribe(
     hass: HomeAssistant, setup_integration: MockConfigEntry, mock_client: MagicMock
 ) -> None:
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_STT_MODEL: "custom-asr"}
+    update_subentry(
+        hass, setup_integration, SUBENTRY_STT, **{CONF_STT_MODEL: "custom-asr"}
     )
+    await hass.async_block_till_done()
     mock_client.transcriptions.create = AsyncMock(return_value="привет")
 
     result = await _entity(hass).async_process_audio_stream(
@@ -69,9 +72,14 @@ async def test_languages_follow_model(
     assert "ru" in entity.supported_languages
     assert "ja" not in entity.supported_languages
 
-    hass.config_entries.async_update_entry(
-        setup_integration, options={CONF_STT_MODEL: "openai/whisper-large-v3"}
+    update_subentry(
+        hass,
+        setup_integration,
+        SUBENTRY_STT,
+        **{CONF_STT_MODEL: "openai/whisper-large-v3"},
     )
+    await hass.async_block_till_done()
+    entity = _entity(hass)
     assert "ja" in entity.supported_languages
 
 
