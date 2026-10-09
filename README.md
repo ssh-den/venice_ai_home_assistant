@@ -4,9 +4,8 @@
 > This is a fork of [grasponcrypto/venice_ai](https://github.com/grasponcrypto/venice_ai).
 > Version 2.0 differs noticeably from upstream: the client is built on the OpenAI
 > Python SDK, the conversation agent uses the Home Assistant chat log with native
-> streaming, the default model changed, the `todo` platform was removed and the
-> minimum Home Assistant version is 2025.9. See the [changelog](CHANGELOG.md) for
-> the full list.
+> streaming, the default model changed and the minimum Home Assistant version is
+> 2025.9. See the [changelog](CHANGELOG.md) for the full list.
 
 Home Assistant integration for [Venice AI](https://venice.ai): a conversation agent,
 AI Task entity, text-to-speech, speech-to-text and image generation.

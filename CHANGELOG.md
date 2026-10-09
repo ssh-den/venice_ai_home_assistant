@@ -14,7 +14,6 @@ fork and differs noticeably from upstream.
 - Home Assistant 2025.9 or newer is required.
 - The default chat model is now `e2ee-deepseek-v4-flash`; entries that have not
   saved a model in the options switch to it.
-- The `todo` platform was removed.
 - The Venice client is built on the OpenAI Python SDK, which replaces the
   hand-written HTTP client. Retry, timeout and HTTP pool constants were removed
   from `const.py`.
@@ -42,6 +41,11 @@ fork and differs noticeably from upstream.
   loaded.
 - The API key is validated against an authenticated endpoint, since the model
   list is public.
+
+### Removed
+- Unused and non-working `todo.py` and `task_types.py` modules. They were never
+  loaded as a platform, so no entities disappear.
+- Translations for errors, aborts and services that were never used.
 
 ### Fixed
 - The `ai_task` action failed on every call.
