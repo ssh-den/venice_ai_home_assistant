@@ -2,7 +2,8 @@
 
 ## Setup
 
-Python 3.13 and [uv](https://docs.astral.sh/uv/) are required.
+The project is managed with [uv](https://docs.astral.sh/uv/); the required
+Python version is declared in `pyproject.toml`.
 
 ```bash
 git clone https://github.com/ssh-den/venice_ai_home_assistant.git
@@ -25,24 +26,6 @@ key or network access is needed.
 
 All of them must pass before a change is merged. New behaviour needs tests.
 
-## Project layout
-
-```
-custom_components/venice_ai/
-├── __init__.py      # Setup, unload, migration, repair issues
-├── client.py        # OpenAI SDK facade, error mapping, usage metrics
-├── coordinator.py   # Periodic refresh of models and voices
-├── models.py        # Model capabilities from /models
-├── venice_api.py    # Chat requests, streaming, <think> filtering
-├── conversation.py  # Conversation agent
-├── ai_task.py       # AI Task entity
-├── tts.py / stt.py  # Speech platforms
-├── sensor.py        # Diagnostic usage sensors
-├── services.py      # generate_image and ai_task actions
-├── config_flow.py   # User, reauth and options flows
-└── diagnostics.py   # Redacted diagnostics
-```
-
 ## Style
 
 - Type hints everywhere; the code must stay clean under mypy and pyright.
@@ -55,7 +38,7 @@ custom_components/venice_ai/
 
 1. Describe the changes in `CHANGELOG.md`.
 2. Bump the version in `manifest.json` and `pyproject.toml`.
-3. Tag the release, for example `git tag -a v2.0.1`.
+3. Tag the release with the same version.
 
 ## Reporting bugs
 
