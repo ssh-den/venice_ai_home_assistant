@@ -25,7 +25,10 @@ from custom_components.venice_ai.const import (
     CONF_STRIP_THINKING_RESPONSE,
     MAX_API_MESSAGES,
 )
-from custom_components.venice_ai.conversation import _final_text, _trim_api_messages
+from custom_components.venice_ai.conversation import (
+    _fallback_text,
+    _trim_api_messages,
+)
 
 from .conftest import SCHEMA_MODEL, FakeChunk, FakeStream
 
@@ -258,17 +261,62 @@ def test_trim_noop_for_short_conversations() -> None:
 
 
 @pytest.mark.parametrize(
-    ("raw", "finish_reason", "strip", "expected"),
+    ("thinking", "finish_reason", "expected"),
     [
-        ("Hello", "stop", False, "Hello"),
-        ("<think>x</think>Hello", "stop", True, "Hello"),
-        ("<think>only</think>", "stop", True, "<think>only</think>"),
-        ("", "length", False, "cut off"),
-        ("", "stop", False, "didn't receive"),
+        ("pondering", "stop", "pondering"),
+        ("pondering", "length", "cut off"),
+        ("", "length", "cut off"),
+        ("", "stop", "didn't receive"),
     ],
 )
-def test_final_text(raw: str, finish_reason: str, strip: bool, expected: str) -> None:
-    assert expected in _final_text(raw, finish_reason, strip)
+def test_fallback_text(thinking: str, finish_reason: str, expected: str) -> None:
+    assert expected in _fallback_text(thinking, finish_reason)
+
+
+@pytest.mark.parametrize(
+    ("options", "reply", "expected"),
+    [
+        ({CONF_STREAM_RESPONSE: False}, _reply("<think>only</think>"), "only"),
+        (
+            {CONF_STREAM_RESPONSE: False},
+            {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+            "cut off",
+        ),
+        (
+            {CONF_STREAM_RESPONSE: False},
+            _reply("", reasoning_content="I think so"),
+            "I think so",
+        ),
+    ],
+)
+async def test_non_streaming_fallbacks(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+    reply: dict[str, Any],
+    expected: str,
+) -> None:
+    mock_client.chat.create_non_streaming.return_value = reply
+    result = await _converse(hass, "Hi")
+    assert expected in result.response.speech["plain"]["speech"]
+
+
+@pytest.mark.parametrize(
+    "options", [{CONF_STREAM_RESPONSE: False, CONF_LLM_HASS_API: [TEST_API_ID]}]
+)
+async def test_malformed_tool_calls_end_the_turn(
+    hass: HomeAssistant,
+    setup_integration: MockConfigEntry,
+    mock_client: MagicMock,
+    echo_tool: _EchoTool,
+) -> None:
+    mock_client.chat.create_non_streaming.return_value = _reply(
+        "Done", tool_calls=[{"type": "function", "function": {"name": "echo"}}]
+    )
+    result = await _converse(hass, "Hi")
+    assert result.response.speech["plain"]["speech"] == "Done"
+    assert mock_client.chat.create_non_streaming.await_count == 1
+    assert not echo_tool.calls
 
 
 @pytest.mark.parametrize(

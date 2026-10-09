@@ -12,7 +12,7 @@ from homeassistant.components import conversation
 from homeassistant.const import CONF_LLM_HASS_API, MATCH_ALL
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers import device_registry as dr, intent, llm
+from homeassistant.helpers import intent, llm
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from voluptuous_openapi import convert
 
@@ -20,33 +20,27 @@ from . import VeniceAIConfigEntry
 from .client import RateLimitError, VeniceAIError
 from .const import (
     CONF_CHAT_MODEL,
-    CONF_DISABLE_THINKING,
-    CONF_MAX_TOKENS,
     CONF_MAX_TOOL_ITERATIONS,
     CONF_PROMPT,
     CONF_STREAM_RESPONSE,
     CONF_STRIP_THINKING_RESPONSE,
-    CONF_TEMPERATURE,
-    CONF_TOP_P,
     DEFAULT_SYSTEM_PROMPT,
     DOMAIN,
     MAX_API_MESSAGES,
     RECOMMENDED_CHAT_MODEL,
-    RECOMMENDED_DISABLE_THINKING,
-    RECOMMENDED_MAX_TOKENS,
     RECOMMENDED_MAX_TOOL_ITERATIONS,
     RECOMMENDED_STREAM_RESPONSE,
     RECOMMENDED_STRIP_THINKING_RESPONSE,
-    RECOMMENDED_TEMPERATURE,
-    RECOMMENDED_TOP_P,
 )
+from .entity import device_info
 from .models import get_chat_model_info
 from .venice_api import (
     ChatParameters,
     StreamOutcome,
     ThinkingFilter,
     VeniceConversationService,
-    strip_thinking,
+    chat_log_to_messages,
+    chat_parameters,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,53 +73,6 @@ def _format_tool(
     if tool.description:
         function["description"] = tool.description
     return {"type": "function", "function": function}
-
-
-def _convert_content(
-    content: conversation.Content, strip_thinking_output: bool
-) -> dict[str, Any] | None:
-    """Convert one chat log entry to a Venice AI chat message."""
-    if isinstance(content, conversation.SystemContent):
-        return {"role": "system", "content": content.content}
-    if isinstance(content, conversation.UserContent):
-        return {"role": "user", "content": content.content}
-    if isinstance(content, conversation.ToolResultContent):
-        return {
-            "role": "tool",
-            "tool_call_id": content.tool_call_id,
-            "content": json.dumps(content.tool_result),
-        }
-    if isinstance(content, conversation.AssistantContent):
-        text = content.content or ""
-        if strip_thinking_output:
-            text = strip_thinking(text)
-        message: dict[str, Any] = {"role": "assistant", "content": text}
-        if content.tool_calls:
-            message["tool_calls"] = [
-                {
-                    "id": tool_call.id,
-                    "type": "function",
-                    "function": {
-                        "name": tool_call.tool_name,
-                        "arguments": json.dumps(tool_call.tool_args),
-                    },
-                }
-                for tool_call in content.tool_calls
-            ]
-        return message
-    _LOGGER.warning("Unsupported chat log content: %s", type(content).__name__)
-    return None
-
-
-def _convert_chat_log(
-    chat_log: conversation.ChatLog, strip_thinking_output: bool
-) -> list[dict[str, Any]]:
-    """Convert the Home Assistant chat log into Venice AI chat messages."""
-    messages = []
-    for content in chat_log.content:
-        if (message := _convert_content(content, strip_thinking_output)) is not None:
-            messages.append(message)
-    return messages
 
 
 def _trim_api_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -194,18 +141,13 @@ def _parse_tool_calls(
     return tool_inputs, rejected
 
 
-def _final_text(raw_text: str, finish_reason: str, strip_thinking_output: bool) -> str:
-    """Return the text to show for a final answer, with useful fallbacks."""
-    text = strip_thinking(raw_text) if strip_thinking_output else raw_text
-    if text.strip():
-        return text
+def _fallback_text(thinking: str, finish_reason: str) -> str:
+    """Return the text to show when the model gave no visible answer."""
     if finish_reason == "length":
         return _TRUNCATED_MESSAGE
-    if strip_thinking_output and raw_text.strip():
-        _LOGGER.warning(
-            "Stripping thinking removed the whole answer; returning raw output"
-        )
-        return raw_text
+    if thinking.strip():
+        _LOGGER.warning("Model replied with reasoning only; returning it as answer")
+        return thinking
     return _EMPTY_MESSAGE
 
 
@@ -220,21 +162,19 @@ def _filtered_deltas(
     return deltas
 
 
-def _add_stream_fallback(
+def _add_fallback(
     chat_log: conversation.ChatLog, agent_id: str, finish_reason: str
 ) -> None:
-    """Add a fallback answer when a streamed reply had no visible text."""
+    """Add a fallback answer when the reply had no visible text."""
     last = chat_log.content[-1]
     thinking = ""
     if isinstance(last, conversation.AssistantContent):
         if (last.content or "").strip():
             return
         thinking = last.thinking_content or ""
-    if thinking.strip() and finish_reason != "length":
-        _LOGGER.warning("Model replied with reasoning only; returning it as answer")
     chat_log.async_add_assistant_content_without_tools(
         conversation.AssistantContent(
-            agent_id=agent_id, content=_final_text(thinking, finish_reason, False)
+            agent_id=agent_id, content=_fallback_text(thinking, finish_reason)
         )
     )
 
@@ -242,23 +182,19 @@ def _add_stream_fallback(
 class VeniceAIConversationEntity(conversation.ConversationEntity):
     """Venice AI conversation entity."""
 
+    _attr_has_entity_name = True
+    _attr_name = None
+
     def __init__(self, entry: VeniceAIConfigEntry) -> None:
         """Initialize the entity."""
         self.entry = entry
         self._service = VeniceConversationService(entry.runtime_data.client)
         self._attr_unique_id = f"{entry.entry_id}_conversation"
-        self._attr_name = entry.title
         if entry.options.get(CONF_LLM_HASS_API):
             self._attr_supported_features = (
                 conversation.ConversationEntityFeature.CONTROL
             )
-        self._attr_device_info = dr.DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            manufacturer="Venice AI",
-            model="Conversation",
-            entry_type=dr.DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = device_info(entry)
 
     @property
     def supports_streaming(self) -> bool:
@@ -317,7 +253,6 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 CONF_STRIP_THINKING_RESPONSE, RECOMMENDED_STRIP_THINKING_RESPONSE
             )
         )
-        stream = self.supports_streaming
         max_iterations = int(
             options.get(CONF_MAX_TOOL_ITERATIONS, RECOMMENDED_MAX_TOOL_ITERATIONS)
         )
@@ -332,48 +267,17 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 _format_tool(tool, chat_log.llm_api.custom_serializer)
                 for tool in chat_log.llm_api.tools
             ] or None
-
-        params = ChatParameters(
-            model=model,
-            max_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
-            temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
-            top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
-            tools=tools,
-            venice_parameters=(
-                {"disable_thinking": True}
-                if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
-                else None
-            ),
-        )
+        params = chat_parameters(options, model, tools=tools)
 
         for iteration in range(max_iterations):
-            messages = _trim_api_messages(_convert_chat_log(chat_log, strip))
+            messages = _trim_api_messages(chat_log_to_messages(chat_log, strip))
+            outcome = StreamOutcome()
             started = time.monotonic()
-            if stream:
-                outcome = StreamOutcome()
-                async for _content in chat_log.async_add_delta_content_stream(
-                    user_input.agent_id,
-                    self._async_delta_stream(
-                        chat_log, messages, params, outcome, strip
-                    ),
-                ):
-                    pass
-                _LOGGER.debug(
-                    "Venice AI stream %d took %.3fs (messages=%d, tools=%d)",
-                    iteration + 1,
-                    time.monotonic() - started,
-                    len(messages),
-                    len(tools or []),
-                )
-                last = chat_log.content[-1]
-                if isinstance(last, conversation.ToolResultContent):
-                    continue
-                _add_stream_fallback(
-                    chat_log, user_input.agent_id, outcome.finish_reason
-                )
-                return
-
-            response = await self._service.chat(messages, params)
+            async for _content in chat_log.async_add_delta_content_stream(
+                user_input.agent_id,
+                self._async_deltas(chat_log, messages, params, outcome, strip),
+            ):
+                pass
             _LOGGER.debug(
                 "Venice AI call %d took %.3fs (messages=%d, tools=%d)",
                 iteration + 1,
@@ -381,54 +285,24 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
                 len(messages),
                 len(tools or []),
             )
-
-            choices = response.get("choices") if isinstance(response, dict) else None
-            if not choices or not isinstance(choices[0], dict):
-                raise HomeAssistantError("Received invalid response from Venice AI")
-            choice = choices[0]
-            message = choice.get("message") or {}
-            finish_reason = choice.get("finish_reason") or "unknown"
-            raw_text = message.get("content") or ""
-            if finish_reason == "length":
+            if outcome.finish_reason == "length":
                 _LOGGER.warning(
                     "Venice AI response truncated by max_tokens (%s)", params.max_tokens
                 )
-
-            raw_tool_calls = message.get("tool_calls") or []
-            if not raw_tool_calls:
-                chat_log.async_add_assistant_content_without_tools(
-                    conversation.AssistantContent(
-                        agent_id=user_input.agent_id,
-                        content=_final_text(raw_text, finish_reason, strip),
-                    )
-                )
-                return
-
-            tool_inputs, rejected = _parse_tool_calls(raw_tool_calls)
-            assistant = conversation.AssistantContent(
-                agent_id=user_input.agent_id,
-                content=strip_thinking(raw_text) if strip else raw_text,
-                tool_calls=tool_inputs or None,
-            )
-            if chat_log.llm_api is None:
-                chat_log.async_add_assistant_content_without_tools(assistant)
-                return
-            async for _tool_result in chat_log.async_add_assistant_content(assistant):
-                pass
-            for result in rejected:
-                async for _tool_result in chat_log.async_add_assistant_content(result):
-                    pass
+            if isinstance(chat_log.content[-1], conversation.ToolResultContent):
+                continue
+            _add_fallback(chat_log, user_input.agent_id, outcome.finish_reason)
+            return
 
         _LOGGER.warning("Reached max tool iterations (%d)", max_iterations)
-        last = chat_log.content[-1]
-        if not isinstance(last, conversation.AssistantContent):
+        if not isinstance(chat_log.content[-1], conversation.AssistantContent):
             chat_log.async_add_assistant_content_without_tools(
                 conversation.AssistantContent(
                     agent_id=user_input.agent_id, content=_EMPTY_MESSAGE
                 )
             )
 
-    async def _async_delta_stream(
+    async def _async_deltas(
         self,
         chat_log: conversation.ChatLog,
         messages: list[dict[str, Any]],
@@ -438,11 +312,13 @@ class VeniceAIConversationEntity(conversation.ConversationEntity):
     ) -> AsyncGenerator[
         conversation.AssistantContentDeltaDict | conversation.ToolResultContentDeltaDict
     ]:
-        """Translate Venice AI stream deltas into chat log deltas."""
+        """Translate Venice AI deltas into chat log deltas."""
         yield {"role": "assistant"}
         thinking_filter = ThinkingFilter() if strip else None
         raw_tool_calls: list[dict[str, Any]] = []
-        async for delta in self._service.chat_stream(messages, params, outcome):
+        async for delta in self._service.chat_deltas(
+            messages, params, outcome, self.supports_streaming
+        ):
             if reasoning := delta.get("reasoning"):
                 yield {"thinking_content": reasoning}
             if content := delta.get("content"):

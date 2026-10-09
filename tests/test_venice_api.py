@@ -193,3 +193,57 @@ class TestVeniceConversationService:
         sent = client.chat.last_create_kwargs
         assert sent["stream_options"] == {"include_usage": True}
         assert sent["tools"] == [{"type": "function"}]
+
+
+async def test_chat_deltas_without_streaming(make_client: Any) -> None:
+    client = make_client(
+        non_streaming_response={
+            "choices": [
+                {
+                    "message": {
+                        "reasoning_content": "hm",
+                        "content": "Hi",
+                        "tool_calls": [{"id": "1"}],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        }
+    )
+    outcome = StreamOutcome()
+    deltas = [
+        d
+        async for d in VeniceConversationService(client).chat_deltas(
+            [], ChatParameters(model="m"), outcome, stream=False
+        )
+    ]
+    assert deltas == [
+        {"reasoning": "hm"},
+        {"content": "Hi"},
+        {"tool_calls": [{"id": "1"}]},
+    ]
+    assert outcome.finish_reason == "tool_calls"
+
+
+async def test_chat_deltas_invalid_response(make_client: Any) -> None:
+    client = make_client(non_streaming_response={"choices": []})
+    with pytest.raises(venice_api.VeniceAIError, match="invalid response"):
+        _ = [
+            d
+            async for d in VeniceConversationService(client).chat_deltas(
+                [], ChatParameters(model="m"), StreamOutcome(), stream=False
+            )
+        ]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("<think>x</think>Answer", "Answer"),
+        ("<think>never closed", ""),
+        ("Thinking about it end of thinking Answer", "Answer"),
+        ("I like the end of thinking part", "I like the end of thinking part"),
+    ],
+)
+def test_strip_thinking(text: str, expected: str) -> None:
+    assert venice_api.strip_thinking(text) == expected

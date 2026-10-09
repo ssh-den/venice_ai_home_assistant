@@ -20,11 +20,10 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .client import VeniceAIMetrics
-from .const import DOMAIN
+from .entity import device_info
 
 if TYPE_CHECKING:
     from . import VeniceAIRuntimeData
@@ -120,11 +119,7 @@ class VeniceAIUsageSensor(SensorEntity):
         self.entity_description = description
         self._metrics = runtime_data.client.metrics
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name=entry.title,
-            manufacturer="Venice AI",
-        )
+        self._attr_device_info = device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         """Push state updates whenever the metrics change."""

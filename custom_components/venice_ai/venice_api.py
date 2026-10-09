@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass
 import json
 import logging
 from typing import Any
 
-from .client import AsyncVeniceAIClient
+from homeassistant.components import conversation
+
+from .client import AsyncVeniceAIClient, VeniceAIError
+from .const import (
+    CONF_DISABLE_THINKING,
+    CONF_MAX_TOKENS,
+    CONF_TEMPERATURE,
+    CONF_TOP_P,
+    RECOMMENDED_DISABLE_THINKING,
+    RECOMMENDED_MAX_TOKENS,
+    RECOMMENDED_TEMPERATURE,
+    RECOMMENDED_TOP_P,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,6 +44,76 @@ class ChatParameters:
     tools: list[dict[str, Any]] | None = None
     venice_parameters: dict[str, Any] | None = None
     response_format: dict[str, Any] | None = None
+
+
+def chat_parameters(
+    options: Mapping[str, Any],
+    model: str,
+    *,
+    tools: list[dict[str, Any]] | None = None,
+    response_format: dict[str, Any] | None = None,
+) -> ChatParameters:
+    """Build request parameters from config entry options."""
+    return ChatParameters(
+        model=model,
+        max_tokens=options.get(CONF_MAX_TOKENS, RECOMMENDED_MAX_TOKENS),
+        temperature=options.get(CONF_TEMPERATURE, RECOMMENDED_TEMPERATURE),
+        top_p=options.get(CONF_TOP_P, RECOMMENDED_TOP_P),
+        tools=tools,
+        venice_parameters=(
+            {"disable_thinking": True}
+            if options.get(CONF_DISABLE_THINKING, RECOMMENDED_DISABLE_THINKING)
+            else None
+        ),
+        response_format=response_format,
+    )
+
+
+def _convert_content(
+    content: conversation.Content, strip_thinking_output: bool
+) -> dict[str, Any] | None:
+    """Convert one chat log entry to a Venice AI chat message."""
+    if isinstance(content, conversation.SystemContent):
+        return {"role": "system", "content": content.content}
+    if isinstance(content, conversation.UserContent):
+        return {"role": "user", "content": content.content}
+    if isinstance(content, conversation.ToolResultContent):
+        return {
+            "role": "tool",
+            "tool_call_id": content.tool_call_id,
+            "content": json.dumps(content.tool_result),
+        }
+    if isinstance(content, conversation.AssistantContent):
+        text = content.content or ""
+        if strip_thinking_output:
+            text = strip_thinking(text)
+        message: dict[str, Any] = {"role": "assistant", "content": text}
+        if content.tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.tool_name,
+                        "arguments": json.dumps(tool_call.tool_args),
+                    },
+                }
+                for tool_call in content.tool_calls
+            ]
+        return message
+    _LOGGER.warning("Unsupported chat log content: %s", type(content).__name__)
+    return None
+
+
+def chat_log_to_messages(
+    chat_log: conversation.ChatLog, strip_thinking_output: bool
+) -> list[dict[str, Any]]:
+    """Convert the Home Assistant chat log into Venice AI chat messages."""
+    messages = []
+    for content in chat_log.content:
+        if (message := _convert_content(content, strip_thinking_output)) is not None:
+            messages.append(message)
+    return messages
 
 
 @dataclass
@@ -112,6 +194,31 @@ class VeniceConversationService:
             response_format=params.response_format,
             stream=False,
         )
+
+    async def chat_deltas(
+        self,
+        messages: list[dict[str, Any]],
+        params: ChatParameters,
+        outcome: StreamOutcome,
+        stream: bool,
+    ) -> AsyncGenerator[dict[str, Any]]:
+        """Yield the deltas of a completion, streamed or in one response."""
+        if stream:
+            async for delta in self.chat_stream(messages, params, outcome):
+                yield delta
+            return
+        response = await self.chat(messages, params)
+        choices = response.get("choices") if isinstance(response, dict) else None
+        if not choices or not isinstance(choices[0], dict):
+            raise VeniceAIError("Received invalid response from Venice AI")
+        outcome.finish_reason = choices[0].get("finish_reason") or "unknown"
+        message = choices[0].get("message") or {}
+        if reasoning := message.get("reasoning_content"):
+            yield {"reasoning": reasoning}
+        if content := message.get("content"):
+            yield {"content": content}
+        if tool_calls := message.get("tool_calls"):
+            yield {"tool_calls": tool_calls}
 
     async def chat_stream(
         self,
@@ -195,8 +302,8 @@ def extract_json(text: str) -> Any:
 def strip_thinking(text: str) -> str:
     """Remove <think>...</think> blocks from model output.
 
-    Handles both the XML-style tags used by some reasoning models and the
-    literal ' thinking' / ' end of thinking' markers emitted by Venice AI.
+    Also drops a leading reasoning section that ends with the literal
+    ' end of thinking' marker emitted by some Venice AI models.
     """
     if not text:
         return text
@@ -211,9 +318,8 @@ def strip_thinking(text: str) -> str:
             text = text[:start].strip()
             break
         text = text[:start] + text[end + 8 :]
-    # Venice-style ' thinking' ... ' end of thinking'
-    if " thinking" in text:
-        parts = text.split(" end of thinking")
-        if len(parts) > 1:
-            text = parts[-1].strip()
+    if text.lstrip().lower().startswith("thinking"):
+        _head, marker, tail = text.partition(" end of thinking")
+        if marker:
+            text = tail
     return text.strip()
