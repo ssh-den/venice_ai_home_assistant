@@ -1,26 +1,25 @@
 {
     "domain": "venice_ai",
     "name": "VeniceAI Conversation",
-    "version": "2.0.0",
-    "documentation": "https://github.com/ssh-den/venice_ai_home_assistant",
-    "issue_tracker": "https://github.com/ssh-den/venice_ai_home_assistant/issues",
-    "requirements": [
-        "openai>=1.93.3",
-        "voluptuous-openapi>=0.0.4"
-    ],
-    "dependencies": [
-        "conversation"
-    ],
     "after_dependencies": [
         "ai_task",
         "assist_pipeline",
         "intent"
     ],
     "codeowners": [
-        "@grasponcrypto"
+        "@ssh-den"
     ],
-    "iot_class": "cloud_polling",
-    "integration_type": "service",
     "config_flow": true,
-    "homeassistant": "2025.9.0"
+    "dependencies": [
+        "conversation"
+    ],
+    "documentation": "https://github.com/ssh-den/venice_ai_home_assistant",
+    "integration_type": "service",
+    "iot_class": "cloud_polling",
+    "issue_tracker": "https://github.com/ssh-den/venice_ai_home_assistant/issues",
+    "requirements": [
+        "openai>=1.93.3",
+        "voluptuous-openapi>=0.0.4"
+    ],
+    "version": "2.0.1"
 }

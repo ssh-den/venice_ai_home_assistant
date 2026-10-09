@@ -4,6 +4,29 @@ All notable changes to **Venice AI Conversation** are documented here.
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 
+## [2.0.1] — 2026-10-09
+
+### Added
+- CI runs hassfest, the test suite, linters and type checkers.
+- Manually triggered workflow that tags and publishes a release from the
+  changelog.
+
+### Changed
+- `codeowners` points to the fork maintainer.
+- The manifest keys follow the order hassfest requires, and the unsupported
+  `homeassistant` key was dropped; the minimum version stays in `hacs.json`.
+
+### Removed
+- The deprecated model repair issue, which had no models to report.
+- Repeated API key validation during setup; the first coordinator refresh
+  already checks it.
+
+### Fixed
+- AI Task structures built from selectors, as sent by `ai_task.generate_data`,
+  could not be converted to a JSON schema.
+- **Strip thinking response** was off for entries that had never saved options,
+  although the options form showed it as on.
+
 ## [2.0.0] — 2026-10-09
 
 This release is published from the
@@ -46,9 +69,6 @@ fork and differs noticeably from upstream.
 - Unused and non-working `todo.py` and `task_types.py` modules. They were never
   loaded as a platform, so no entities disappear.
 - Translations for errors, aborts and services that were never used.
-- The deprecated model repair issue, which had no models to report.
-- Repeated API key validation during setup; the first coordinator refresh
-  already checks it.
 
 ### Fixed
 - The `ai_task` action failed on every call.
@@ -58,10 +78,6 @@ fork and differs noticeably from upstream.
 - `request_timeout` was ignored by most requests.
 - Select options lost their values in the options flow.
 - Downgraded config entries were accepted by the migration.
-- AI Task structures built from selectors, as sent by `ai_task.generate_data`,
-  could not be converted to a JSON schema.
-- **Strip thinking response** was off for entries that had never saved options,
-  although the options form showed it as on.
 
 ## [1.0.0] — upstream
 
@@ -121,6 +137,7 @@ fork and differs noticeably from upstream.
 - Diagnostics export with redacted API key.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
+[2.0.1]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ssh-den/venice_ai_home_assistant
 [1.0.0]: https://github.com/grasponcrypto/venice_ai
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0
