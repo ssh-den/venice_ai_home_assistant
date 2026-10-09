@@ -19,18 +19,12 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   each model, like the chat model selector.
 - [docs/privacy.md](docs/privacy.md) describes what is sent to Venice AI and
   links the Venice privacy policy and terms of service.
-- CI runs hassfest, the test suite, linters and type checkers.
-- Manually triggered workflow that tags and publishes a release from the
-  changelog.
 
 ### Changed
 - The audio format follows the formats the TTS model supports: MP3, or WAV for
   models without MP3. Home Assistant converts audio for each speaker.
 - Non-streamed answers use the same chat log path as streamed ones.
 - All entities share one device and use entity names relative to it.
-- `codeowners` points to the fork maintainer.
-- The manifest keys follow the order hassfest requires, and the unsupported
-  `homeassistant` key was dropped; the minimum version stays in `hacs.json`.
 
 ### Security
 - Logs no longer contain transcriptions, tool arguments or model answers.
@@ -40,6 +34,29 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - **TTS response format**, **STT response format** and **STT timestamps**
   options. The TTS format comes from the model; subtitle formats and timestamps
   are of no use to a voice assistant.
+
+### Fixed
+- The `ogg` TTS format and the `srt`, `vtt` and `verbose_json` STT formats were
+  offered although Venice does not support them.
+- Answers that mentioned "end of thinking" were cut off.
+- A reply whose tool calls were all malformed made the agent call the model
+  again until the iteration limit.
+- TTS and STT were checked against the combined list of audio models, so a
+  configured TTS model that only existed as an STT model went unreported.
+
+## [2.0.1] — 2026-10-09
+
+### Added
+- CI runs hassfest, the test suite, linters and type checkers.
+- Manually triggered workflow that tags and publishes a release from the
+  changelog.
+
+### Changed
+- `codeowners` points to the fork maintainer.
+- The manifest keys follow the order hassfest requires, and the unsupported
+  `homeassistant` key was dropped; the minimum version stays in `hacs.json`.
+
+### Removed
 - The deprecated model repair issue, which had no models to report.
 - Repeated API key validation during setup; the first coordinator refresh
   already checks it.
@@ -49,13 +66,6 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
   could not be converted to a JSON schema.
 - **Strip thinking response** was off for entries that had never saved options,
   although the options form showed it as on.
-- The `ogg` TTS format and the `srt`, `vtt` and `verbose_json` STT formats were
-  offered although Venice does not support them.
-- Answers that mentioned "end of thinking" were cut off.
-- A reply whose tool calls were all malformed made the agent call the model
-  again until the iteration limit.
-- TTS and STT were checked against the combined list of audio models, so a
-  configured TTS model that only existed as an STT model went unreported.
 
 ## [2.0.0] — 2026-10-09
 
@@ -168,6 +178,7 @@ fork and differs noticeably from upstream.
 - 25 unit tests covering `client.py` and `venice_api.py`.
 
 [2.1.0]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.1.0
+[2.0.1]: https://github.com/ssh-den/venice_ai_home_assistant/releases/tag/v2.0.1
 [2.0.0]: https://github.com/ssh-den/venice_ai_home_assistant
 [1.0.0]: https://github.com/grasponcrypto/venice_ai
 [0.9.0]: https://github.com/grasponcrypto/venice_ai/releases/tag/0.9.0
