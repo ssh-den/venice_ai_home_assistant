@@ -186,3 +186,4 @@ fix_all.py
 fix_log.txt
 test_*.py
 !tests/test_*.py
+!tests_live/test_*.py

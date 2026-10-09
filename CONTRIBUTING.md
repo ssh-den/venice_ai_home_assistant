@@ -21,10 +21,25 @@ Tests run against a real Home Assistant instance through
 key or network access is needed.
 
 ```bash
-.venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pyright && .venv/bin/pylint custom_components tests
+.venv/bin/pytest && .venv/bin/ruff check . && .venv/bin/black --check . && .venv/bin/mypy && .venv/bin/pyright && .venv/bin/pylint custom_components tests tests_live
 ```
 
 All of them must pass before a change is merged. New behaviour needs tests.
+
+### Live tests
+
+`tests_live` runs the integration against the real Venice API: the model lists,
+a few short chat turns, a tool call, an AI Task, text-to-speech and
+speech-to-text round trips in English and Russian. They pick the cheapest chat
+model with tools and send only short phrases, so a run costs a fraction of a
+cent. Put the line `VENICE_API_KEY=...` into `.env` in the repository root,
+which git ignores, or export the variable, and run them explicitly:
+
+```bash
+.venv/bin/pytest tests_live
+```
+
+Without a key the tests are skipped. The speech round trips need `ffmpeg`.
 
 ## Style
 

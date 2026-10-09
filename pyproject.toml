@@ -43,18 +43,18 @@ combine-as-imports = true
 
 [tool.mypy]
 python_version = "3.13"
-files = ["custom_components/venice_ai", "tests"]
+files = ["custom_components/venice_ai", "tests", "tests_live"]
 explicit_package_bases = true
 check_untyped_defs = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 
 [[tool.mypy.overrides]]
-module = ["voluptuous_openapi.*", "pytest_homeassistant_custom_component.*"]
+module = ["voluptuous_openapi.*", "pytest_homeassistant_custom_component.*", "pytest_socket"]
 ignore_missing_imports = true
 
 [tool.pyright]
-include = ["custom_components", "tests"]
+include = ["custom_components", "tests", "tests_live"]
 venvPath = "."
 venv = ".venv"
 pythonVersion = "3.13"
