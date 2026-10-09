@@ -22,18 +22,21 @@ sent.
 ## What stays in Home Assistant
 
 - The API key is stored in the config entry like any other integration
-  credential. Diagnostics show only its last four characters.
+  credential. Diagnostics show only its last four characters and hide the
+  system prompt.
 - Home Assistant keeps the conversation history of a session; the integration
   stores no history of its own.
 - Request, error and token counters live in memory and reset when the entry
   reloads.
-- The log can contain user content: transcriptions of voice commands with
-  debug logging on, and the model output of malformed tool calls or
-  unparseable AI Task answers in warnings and errors.
+- The integration does not log prompts, answers, transcriptions or tool
+  arguments, only their sizes and tool names. Error messages returned by
+  Venice are logged as they are.
 
 ## Privacy levels of Venice models
 
-The chat model selector shows the privacy level Venice reports for each model:
+The model selectors show the privacy level Venice reports for each chat,
+text-to-speech and speech-to-text model. Prefer **Private**, **TEE** or **E2EE**
+models when the conversation or the voice commands are sensitive.
 
 - **Anonymized**: Venice hides your identity from the model provider, but the
   provider processes the prompt under its own policies.
@@ -44,8 +47,8 @@ The chat model selector shows the privacy level Venice reports for each model:
   it. The integration does not implement this yet, so E2EE-capable models are
   used like TEE models.
 
-TEE and E2EE are available for text models only. Speech models are private or
-anonymized; Venice reports the level for each of them in its model list.
+TEE and E2EE are available for text models only; speech models are either
+private or anonymized.
 
 According to its documentation, Venice does not store or log prompt and response
 content for normal inference, but it does process metadata such as the API key

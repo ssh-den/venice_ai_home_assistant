@@ -21,6 +21,7 @@ TO_REDACT = {
     "password",
     "secret",
     "authorization",
+    "prompt",
 }
 
 

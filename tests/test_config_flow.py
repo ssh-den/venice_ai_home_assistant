@@ -20,10 +20,12 @@ from custom_components.venice_ai.config_flow import VeniceAIOptionsFlow
 from custom_components.venice_ai.const import (
     CONF_CHAT_MODEL,
     CONF_MAX_TOKENS,
+    CONF_STT_MODEL,
     CONF_TTS_MODEL,
     CONF_TTS_VOICE,
     DOMAIN,
     RECOMMENDED_CHAT_MODEL,
+    RECOMMENDED_STT_MODEL,
 )
 
 COMPONENT_DIR = Path(__file__).parents[1] / "custom_components" / DOMAIN
@@ -106,6 +108,26 @@ async def test_options_chat_model_labels(
         f"{RECOMMENDED_CHAT_MODEL} (E2EE, tools, $0.18/$0.37 per 1M)"
     )
     assert labels["schema-model"] == "schema-model (Anonymized)"
+
+
+async def test_options_speech_model_labels_show_privacy(
+    hass: HomeAssistant, setup_integration: MockConfigEntry
+) -> None:
+    result = await hass.config_entries.options.async_init(setup_integration.entry_id)
+    schema = result["data_schema"]
+    assert schema is not None
+    selectors = {str(key): value for key, value in schema.schema.items()}
+
+    tts = {
+        o["value"]: o["label"] for o in selectors["tts_model_voice"].config["options"]
+    }
+    assert tts["tts-kokoro → af_heart"] == "tts-kokoro → af_heart (Private)"
+    assert tts["tts-wav-only → tara"] == "tts-wav-only → tara"
+
+    stt = {o["value"]: o["label"] for o in selectors[CONF_STT_MODEL].config["options"]}
+    assert stt[RECOMMENDED_STT_MODEL] == (
+        f"Parakeet ASR ({RECOMMENDED_STT_MODEL}, Private)"
+    )
 
 
 def test_options_range_validation() -> None:

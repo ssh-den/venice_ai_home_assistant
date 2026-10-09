@@ -120,7 +120,9 @@ class VeniceAITaskEntity(ai_task.AITaskEntity):
         try:
             data = extract_json(text)
         except json.JSONDecodeError as err:
-            _LOGGER.error("Failed to parse JSON response: %s. Response: %s", err, text)
+            _LOGGER.error(
+                "Failed to parse JSON response of %d characters: %s", len(text), err
+            )
             raise HomeAssistantError("Error parsing structured response") from err
 
         return ai_task.GenDataTaskResult(

@@ -63,7 +63,7 @@ from .const import (
     RECOMMENDED_TTS_SPEED,
     RECOMMENDED_TTS_VOICE,
 )
-from .models import TTSModel, parse_models, parse_tts_models
+from .models import TTSModel, parse_models, parse_tts_models, privacy_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -213,7 +213,8 @@ def _build_combined_tts_options(
         info = tts_info[model_id]
         for voice in info.voices:
             combined = f"{model_id}{_TTS_MV_SEP}{voice}"
-            options.append(SelectOptionDict(label=combined, value=combined))
+            label = f"{combined} ({info.privacy})" if info.privacy else combined
+            options.append(SelectOptionDict(label=label, value=combined))
     if not options:
         fallback = f"{RECOMMENDED_TTS_MODEL}{_TTS_MV_SEP}{RECOMMENDED_TTS_VOICE}"
         options = [SelectOptionDict(label=fallback, value=fallback)]
@@ -275,7 +276,10 @@ def _resolve_combined_tts_value(
 def _model_label(model: dict[str, Any]) -> str:
     spec = model.get("model_spec")
     name = spec.get("name") if isinstance(spec, dict) else None
-    return f"{name} ({model['id']})" if name else str(model["id"])
+    details = ", ".join(
+        part for part in (str(model["id"]), privacy_label(model)) if part
+    )
+    return f"{name} ({details})" if name else details
 
 
 async def _async_list_models(
@@ -588,7 +592,6 @@ class VeniceAIOptionsFlow(OptionsFlowWithReload):
                             RECOMMENDED_TTS_VOICE,
                         )
 
-                    _LOGGER.debug("Final options to save: %s", final_options)
                     return self.async_create_entry(title="", data=final_options)
             except Exception as err:
                 _LOGGER.exception("Error processing options: %s", err)

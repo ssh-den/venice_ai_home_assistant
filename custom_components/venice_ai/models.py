@@ -30,6 +30,12 @@ def _spec(data: Mapping[str, Any]) -> Mapping[str, Any]:
     return spec if isinstance(spec, Mapping) else {}
 
 
+def privacy_label(data: Mapping[str, Any]) -> str | None:
+    """Return the privacy level Venice reports for a model, for display."""
+    privacy = _spec(data).get("privacy")
+    return privacy.capitalize() if isinstance(privacy, str) and privacy else None
+
+
 @dataclass(frozen=True, slots=True)
 class ModelInfo:
     """Parsed description of a single chat model."""
@@ -95,6 +101,7 @@ class TTSModel:
     voices: tuple[str, ...]
     formats: tuple[str, ...] = ()
     default_format: str | None = None
+    privacy: str | None = None
 
     @classmethod
     def from_api(cls, data: Mapping[str, Any]) -> TTSModel:
@@ -106,6 +113,7 @@ class TTSModel:
             voices=_strings(spec.get("voices")) or _strings(data.get("voice_models")),
             formats=_strings(spec.get("supported_formats")),
             default_format=default_format if isinstance(default_format, str) else None,
+            privacy=privacy_label(data),
         )
 
     @property

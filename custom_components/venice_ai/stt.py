@@ -110,5 +110,7 @@ class VeniceAISTT(stt.SpeechToTextEntity):
             _LOGGER.error("Venice AI transcription error: %s", err)
             return stt.SpeechResult(None, stt.SpeechResultState.ERROR)
 
-        _LOGGER.debug("Transcribed %d bytes of audio: %r", len(audio), text)
+        _LOGGER.debug(
+            "Transcribed %d bytes of audio into %d characters", len(audio), len(text)
+        )
         return stt.SpeechResult(text, stt.SpeechResultState.SUCCESS)

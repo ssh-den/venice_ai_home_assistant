@@ -32,7 +32,8 @@ All of them must pass before a change is merged. New behaviour needs tests.
 - Constants and defaults live in `const.py`.
 - `strings.json` and `translations/en.json` are kept identical.
 - Comments only where the code cannot speak for itself.
-- Never log the API key.
+- Never log the API key or user content such as prompts, answers,
+  transcriptions or tool arguments; log sizes and names instead.
 
 ## Speech model languages
 

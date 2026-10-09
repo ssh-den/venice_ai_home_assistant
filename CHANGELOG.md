@@ -15,6 +15,10 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - Text-to-speech synthesizes streamed answers sentence by sentence, so the first
   sentence plays while the model is still answering. Long texts are split to
   stay within the Venice limit of 4096 characters per request.
+- The text-to-speech and speech-to-text selectors show the privacy level of
+  each model, like the chat model selector.
+- [docs/privacy.md](docs/privacy.md) describes what is sent to Venice AI and
+  links the Venice privacy policy and terms of service.
 - CI runs hassfest, the test suite, linters and type checkers.
 - Manually triggered workflow that tags and publishes a release from the
   changelog.
@@ -27,6 +31,10 @@ and follows the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
 - `codeowners` points to the fork maintainer.
 - The manifest keys follow the order hassfest requires, and the unsupported
   `homeassistant` key was dropped; the minimum version stays in `hacs.json`.
+
+### Security
+- Logs no longer contain transcriptions, tool arguments or model answers.
+- Diagnostics hide the system prompt.
 
 ### Removed
 - **TTS response format**, **STT response format** and **STT timestamps**

@@ -115,7 +115,7 @@ def _parse_tool_calls(
         call_id = raw.get("id")
         name = function.get("name")
         if not call_id or not name or raw.get("type", "function") != "function":
-            _LOGGER.warning("Skipping malformed tool call: %s", raw)
+            _LOGGER.warning("Skipping malformed call of tool %s", name)
             continue
         try:
             args = json.loads(function.get("arguments") or "{}")
@@ -126,7 +126,7 @@ def _parse_tool_calls(
                 llm.ToolInput(id=call_id, tool_name=name, tool_args=args)
             )
             continue
-        _LOGGER.warning("Tool %s called with invalid arguments: %s", name, function)
+        _LOGGER.warning("Tool %s called with arguments that are not an object", name)
         tool_inputs.append(
             llm.ToolInput(id=call_id, tool_name=name, tool_args={}, external=True)
         )

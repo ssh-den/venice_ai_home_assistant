@@ -59,6 +59,7 @@ MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
             "model_spec": {
                 "voices": ["bm_daniel", "af_heart", "jf_alpha"],
                 "supported_formats": ["mp3", "wav"],
+                "privacy": "private",
             },
         },
         {
@@ -67,7 +68,13 @@ MODELS_BY_TYPE: dict[str, list[dict[str, Any]]] = {
             "model_spec": {"voices": ["tara"], "supported_formats": ["wav"]},
         },
     ],
-    "asr": [{"id": RECOMMENDED_STT_MODEL, "type": "asr"}],
+    "asr": [
+        {
+            "id": RECOMMENDED_STT_MODEL,
+            "type": "asr",
+            "model_spec": {"name": "Parakeet ASR", "privacy": "private"},
+        }
+    ],
     "image": [
         {"id": "venice-sd35", "type": "image"},
         {"id": "hidream", "type": "image"},
